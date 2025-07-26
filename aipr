@@ -80,7 +80,8 @@ get_branch_remote() {
     if [ -z "$branch" ]; then
         exit 1
     fi
-    local remote=$(git config --get "branch.$branch.remote")
+    local remote
+    remote=$(git config --get "branch.$branch.remote")
     if [ -z "$remote" ]; then
         remote=$(select_remote)
         if [ -z "$remote" ]; then
@@ -91,7 +92,8 @@ get_branch_remote() {
 }
 
 select_remote() {
-    local remotes=($(git remote))
+    local -a remotes
+    readarray -t remotes < <(git remote)
     local remote_count=${#remotes[@]}
 
     if [[ $remote_count -eq 0 ]]; then
@@ -117,6 +119,7 @@ select_remote() {
     done
 }
 
+# Returns 1 if unpushed commits exist, 0 otherwise.
 check_unpush() {
     local branch=$1
     local remote=$2
@@ -125,10 +128,11 @@ check_unpush() {
         return 1
     fi
     if ! git rev-parse --verify "$remote/$branch" >/dev/null 2>&1; then
-        return 1 # Remote branch doesn't exist yet, so nothing to push
+        return 1 # Remote branch doesn't exist yet
     fi
 
-    local unpush=$(git log "$remote/$branch"..HEAD --oneline)
+    local unpush
+    unpush=$(git log "$remote/$branch"..HEAD --oneline)
     if [ -n "$unpush" ]; then
         return 1
     fi
@@ -244,7 +248,7 @@ init_config() {
             exit 1
         fi
 
-        dir=$(dirname $DEFAULT_TITLE_PROMPT)
+        dir=$(dirname "$DEFAULT_TITLE_PROMPT")
         mkdir -p "$dir"
         cp "$brew_title_prompt" "$DEFAULT_TITLE_PROMPT"
     fi
@@ -256,7 +260,7 @@ init_config() {
             exit 1
         fi
 
-        dir=$(dirname $DEFAULT_BODY_PROMPT)
+        dir=$(dirname "$DEFAULT_BODY_PROMPT")
         mkdir -p "$dir"
         cp "$brew_body_prompt" "$DEFAULT_BODY_PROMPT"
     fi
@@ -367,6 +371,9 @@ update_pr() {
     fi
 
     OLD_BODY=$(gh pr view "$ONGOING" --json body --jq '.body')
+    if [ -z "$OLD_BODY" ]; then
+        OLD_BODY="$SYSTEM"
+    fi
 
     EXTRA_SYSTEM=$(
         cat <<EOF
