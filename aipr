@@ -119,24 +119,24 @@ select_remote() {
     done
 }
 
-# Returns 1 if unpushed commits exist, 0 otherwise.
+# Returns 0 if unpushed commits exist, 1 otherwise.
 check_unpush() {
     local branch=$1
     local remote=$2
 
     if ! git ls-remote --exit-code "$remote" &>/dev/null; then
-        return 1
+        return 0
     fi
     if ! git rev-parse --verify "$remote/$branch" >/dev/null 2>&1; then
-        return 1 # Remote branch doesn't exist yet
+        return 0 # Remote branch doesn't exist yet
     fi
 
     local unpush
     unpush=$(git log "$remote/$branch"..HEAD --oneline)
     if [ -n "$unpush" ]; then
-        return 1
+        return 0
     fi
-    return 0
+    return 1
 }
 
 prompt_push() {
@@ -531,7 +531,7 @@ if [ -z "$HEAD_OWNER" ] || [ "$HEAD_OWNER" = "null" ]; then
     exit 1
 fi
 
-if ! check_unpush "$HEAD_BRANCH" "$HEAD_REMOTE"; then
+if check_unpush "$HEAD_BRANCH" "$HEAD_REMOTE"; then
     prompt_push "$HEAD_BRANCH" "$HEAD_REMOTE" || exit 1
 fi
 
