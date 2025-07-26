@@ -1,0 +1,25 @@
+#compdef aitag
+
+_aitag() {
+    local state
+    _arguments \
+        {-h,--help}'[Show help message]' \
+        {-a,--annotate}'[Create annotated tag]' \
+        {-s,--sign}'[Create signed tag]' \
+        {-u,--local-user=}'[Create tag with specific user]:user:->users' \
+        '--prompt=[Use custom prompt file]:prompt file:_files' \
+        '--model=[Specify LLM model to use]:model:->models'
+
+    case "$state" in
+        users)
+            user=$(gpg --list-secret-keys --keyid-format LONG | grep uid | awk -F'[<>]' '{print $2}')
+            _describe -t user 'user' user
+            ;;
+        models)
+            model=($(llm models | grep -v '^Default' | sed 's/^[^:]*: \([^(]*\)\( (.*)\)\?/\1/'))
+            _describe -t model 'model' model
+            ;;
+    esac
+}
+
+_aitag "$@"

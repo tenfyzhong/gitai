@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# Thanks Harper Reed https://harper.blog/2024/03/11/use-an-llm-to-automagically-generate-meaningful-git-commit-messages/
+
+# ANSI color codes for styling the output
+RED='\033[0;31m'    # Sets text to red
+GREEN='\033[0;32m'  # Sets text to green
+YELLOW='\033[0;33m' # Sets text to yellow
+BLUE='\033[0;34m'   # Sets text to blue
+NC='\033[0m'        # Resets the text color to default, no color
+
+DEFAULT_PROMPT_FILE=~/.config/gitai/prompts/aitag-prompt.txt
+
+check_required_commands() {
+    local missing=0
+    for cmd in git llm; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo "Error: $cmd is not installed"
+            missing=$((missing + 1))
+        fi
+    done
+    return $missing
+}
+
+cleanup() {
+    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
+    kill_spin
+    tput cnorm # Show the cursor
+    exit 1
+}
+
+# Function to display a spinning animation during the LLM processing
+spin_animation() {
+    local msg="$1"
+    # Only show animation if output is going to a terminal
+    if ! [ -t 1 ]; then
+        echo "$1..." # Just show the message without animation
+        return
+    fi
+
+    # Array of spinner characters for the animation
+    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    # Infinite loop to keep the animation running
+    while true; do
+        for i in "${spinner[@]}"; do
+            tput civis                                    # Hide the cursor to enhance the animation appearance
+            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
+            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
+            sleep 0.1                                     # Delay to control the speed of the animation
+            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
+        done
+    done
+}
+
+kill_spin() {
+    if [ -n "$SPIN_PID" ]; then
+        kill $SPIN_PID
+        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
+        SPIN_PID=
+        printf "\n"
+    fi
+}
+
+is_git_repo() {
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+show_help() {
+    echo "Usage: aitag [OPTIONS] TAG_NAME [COMMIT]"
+    echo
+    echo "FLAGS:"
+    echo "  -a, --annotate        Create an annotated tag"
+    echo "  -s, --sign            Create a signed tag"
+    echo "  -u, --local-user USER Create tag with specific user"
+    echo "  --prompt FILE         Use custom prompt file"
+    echo "  --model MODEL         Specify LLM model to use"
+    echo "  -h, --help            Show this help message"
+    echo
+    echo "ENVIRONMENT VARIABLES:"
+    echo "  GITAI_TAG_PROMPT       Default prompt file path (default: $DEFAULT_PROMPT_FILE)"
+    echo "  GITAI_MODEL            Set default LLM model for PR generation"
+    echo
+    echo "EXAMPLES:"
+    echo "  aitag v1.0.0                    # Tag HEAD commit as v1.0.0"
+    echo "  aitag -a v1.0.0 abc1234         # Create annotated tag for specific commit"
+    echo "  aitag --model gpt-4 v1.0.0      # Use gpt-4 model for message generation"
+    echo "  GITAI_MODEL=gpt-4 aitag v1.0.0  # Use gpt-4 via environment variable"
+}
+
+init_config() {
+    if [ ! -f "$DEFAULT_PROMPT_FILE" ]; then
+        brew_title_prompt=$(brew --prefix)/share/gitai/prompts/aitag-prompt.txt
+        if [ ! -f "$brew_title_prompt" ]; then
+            echo "Can't find a default configuration file. Please create one at $DEFAULT_PROMPT_FILE" >&2
+            exit 1
+        fi
+    fi
+}
+
+init_config
+
+TAG_OPTS=()
+PROMPT=${GITAI_TAG_PROMPT:-$DEFAULT_PROMPT_FILE}
+MODEL=${GITAI_MODEL}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h | --help)
+            show_help
+            exit
+            ;;
+        -a | --annotate)
+            TAG_OPTS+=("$1")
+            shift
+            ;;
+        -s | --sign)
+            TAG_OPTS+=("$1")
+            shift
+            ;;
+        -u | --local-user)
+            TAG_OPTS+=("-u" "$2")
+            shift 2
+            ;;
+        --prompt)
+            PROMPT="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [ -n "$MODEL" ]; then
+    export LLM_MODEL="$MODEL"
+fi
+
+trap cleanup SIGINT
+
+if ! check_required_commands; then
+    echo "Please install missing commands before proceeding" >&2
+    exit 1
+fi
+
+if ! is_git_repo; then
+    echo "Not in a Git repository" >&2
+    exit 1
+fi
+
+if [ -z "$1" ]; then
+    exit 1
+fi
+
+TAG_NAME="$1"
+
+COMMIT=$2
+if [ -z "$2" ]; then
+    COMMIT=HEAD
+fi
+
+if ! git rev-parse --verify "$COMMIT" >/dev/null 2>&1; then
+    echo -e "${RED}Error: '$COMMIT' is not a valid commit or branch${NC}" >&2
+    exit 1
+fi
+
+LAST_TAG=$(git tag | sort | tail -n1)
+
+DIFF=
+if [ -z "$LAST_TAG" ]; then
+    # If there no tag, all file are used to generate the message
+    DIFF=$(git ls-files | xargs cat)
+else
+    DIFF=$(git diff "$LAST_TAG"..."$COMMIT")
+fi
+
+spin_animation "Generating tag message" &
+SPIN_PID=$!
+MSG=$(echo "$DIFF" | llm -s "$(cat "$PROMPT")")
+kill_spin
+
+TEMP=$(mktemp -q)
+if [[ -z "$TEMP" || ! -f "$TEMP" ]]; then
+    echo "Error: Failed to create temporary file." >&2
+    exit 1
+fi
+trap 'rm -f "${TEMP}"' EXIT SIGINT TERM
+echo "$MSG" >"$TEMP"
+${EDITOR:-vi} "$TEMP"
+
+read -p "Create tag:$TAG_NAME with these details? [y/N] " confirm
+if [[ $confirm =~ ^[Yy]$ ]]; then
+    git tag "${TAG_OPTS[@]}" -F "$TEMP" "$TAG_NAME" "$COMMIT"
+else
+    echo "Tag creation cancelled"
+fi
+
+rm -f "$TEMP"
