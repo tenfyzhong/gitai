@@ -8,6 +8,11 @@ YELLOW='\033[0;33m' # Sets text to yellow
 BLUE='\033[0;34m'   # Sets text to blue
 NC='\033[0m'        # Resets the text color to default, no color
 
+DEFAUULT_TITLE_PROMPT=~/.config/gitai/prompts/aipr-title-prompt.txt
+DEFAULT_BODY_PROMPT=~/.config/gitai/prompts/aipr-body-prompt.txt
+
+SPIN_PID=
+
 # Function to display a spinning animation during the LLM processing
 spin_animation() {
     local msg="$1"
@@ -211,19 +216,45 @@ show_help() {
     echo "  -B, --base <branch>       The branch into which you want your code merged"
     echo "  -H, --head <branch>       The branch that contains commits for your pull request (default [current branch])"
     echo "  -T, --template <file>     Specify a PR template file to use"
-    echo "  --prompt-title <file>     Path to PR title prompt template (default: $DEFAULT_PROMPT_TITLE)"
-    echo "  --prompt-body <file>      Path to PR body prompt template (default: $DEFAULT_PROMPT_BODY)"
+    echo "  --prompt-title <file>     Path to PR title prompt template (default: $DEFAUULT_TITLE_PROMPT)"
+    echo "  --prompt-body <file>      Path to PR body prompt template (default: $DEFAULT_BODY_PROMPT)"
     echo "  --model <name>            LLM model to use for generating PR content"
     echo "  --update-title            Update PR title when editing existing PR"
     echo "  -h, --help                Show this help message"
     echo ""
     echo "ENVIRONMENT VARIABLES:"
-    echo "  LLM_PR_PROMPT_TITLE       Override default PR title prompt file path"
-    echo "  LLM_PR_PROMPT_BODY        Override default PR body prompt file path"
-    echo "  LLM_PR_MODEL              Set default LLM model for PR generation"
+    echo "  GITAI_PR_PROMPT_TITLE       Override default PR title prompt file path"
+    echo "  GITAI_PR_PROMPT_BODY        Override default PR body prompt file path"
+    echo "  GITAI_MODEL                 Set default LLM model for PR generation"
     echo ""
     echo "GH FLAGS"
     echo "  All flags provided by 'gh pr create/edit' can be pass to the aipr command."
+}
+
+init_config() {
+    if [ ! -f "$DEFAUULT_TITLE_PROMPT" ]; then
+        brew_title_prompt=$(brew --prefix)/share/gitai/prompts/aipr-title-prompt.txt
+        if [ ! -f "$brew_title_prompt" ]; then
+            echo "Can't find a default configuration file. Please create one at $DEFAUULT_TITLE_PROMPT" >&2
+            exit 1
+        fi
+
+        dir=$(dirname $DEFAUULT_TITLE_PROMPT)
+        mkdir -p "$dir"
+        cp "$brew_title_prompt" "$DEFAUULT_TITLE_PROMPT"
+    fi
+
+    if [ ! -f "$DEFAULT_BODY_PROMPT" ]; then
+        brew_body_prompt=$(brew --prefix)/share/gitai/prompts/aipr-body-prompt.txt
+        if [ ! -f "brew_body_prompt" ]; then
+            echo "Can't find a default configuration file. Please create one at $DEFAULT_BODY_PROMPT" >&2
+            exit 1
+        fi
+
+        dir=$(dirname $DEFAULT_BODY_PROMPT)
+        mkdir -p "$dir"
+        cp "$brew_body_prompt" "$DEFAULT_BODY_PROMPT"
+    fi
 }
 
 check_required_commands() {
@@ -244,7 +275,7 @@ ongoing_pr() {
 generate_title() {
     DIFF="$1"
     TEMP_FILE="$2"
-    spin_animation "Generating PR title" &
+    spin_animation "Generating PR title using $MODEL..." &
     SPIN_PID=$!
     TITLE=$(echo "$DIFF" | llm -s "$(cat "$PROMPT_TITLE")")
     kill_spin
@@ -271,7 +302,7 @@ EOF
         PROMPT="$SYSTEM"
     fi
 
-    spin_animation "Generating PR Body" &
+    spin_animation "Generating PR Body using $MODEL..." &
     SPIN_PID=$!
     BODY=$(echo "$DIFF" | llm -s "$PROMPT")
     kill_spin
@@ -355,22 +386,15 @@ EOF
     rm -f "$TEMP_FILE"
 }
 
-DEFAULT_PROMPT_TITLE=~/.config/prompts/pr-title-prompt.txt
-if [ ! -f "$DEFAULT_PROMPT_TITLE" ]; then
-    DEFAULT_PROMPT_TITLE=$(brew --prefix)/share/aipr/prompts/pr-title-prompt.txt
-fi
-DEFAULT_PROMPT_BODY=~/.config/prompts/pr-body-prompt.txt
-if [ ! -f "$DEFAULT_PROMPT_BODY" ]; then
-    DEFAULT_PROMPT_BODY=$(brew --prefix)/share/aipr/prompts/pr-body-prompt.txt
-fi
+init_config
 
 BASE_REMOTE=origin
 BASE_BRANCH=
 HEAD_BRANCH=$(get_current_branch)
 TEMPLATE=
-PROMPT_TITLE=${LLM_PR_PROMPT_TITLE:-$DEFAULT_PROMPT_TITLE}
-PROMPT_BODY=${LLM_PR_PROMPT_BODY:-$DEFAULT_PROMPT_BODY}
-MODEL=${LLM_PR_MODEL}
+PROMPT_TITLE=${GITAI_PR_PROMPT_TITLE:-$DEFAUULT_TITLE_PROMPT}
+PROMPT_BODY=${GITAI_PR_PROMPT_BODY:-$DEFAULT_BODY_PROMPT}
+MODEL=${GITAI_MODEL}
 UPDATE_TITLE=
 
 # Parse command line arguments manually
@@ -434,9 +458,10 @@ if [ ! -f "$PROMPT_BODY" ]; then
     exit 1
 fi
 
-if [ -n "$MODEL" ]; then
-    export LLM_MODEL="$MODEL"
+if [ -z "$MODEL" ]; then
+    MODEL=$(llm models default)
 fi
+export LLM_MODEL="$MODEL"
 
 trap cleanup SIGINT
 
