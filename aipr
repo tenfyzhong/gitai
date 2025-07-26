@@ -1,0 +1,525 @@
+#!/usr/bin/env bash
+# Thanks Harper Reed https://harper.blog/2024/03/11/use-an-llm-to-automagically-generate-meaningful-git-commit-messages/
+
+# ANSI color codes for styling the output
+RED='\033[0;31m'    # Sets text to red
+GREEN='\033[0;32m'  # Sets text to green
+YELLOW='\033[0;33m' # Sets text to yellow
+BLUE='\033[0;34m'   # Sets text to blue
+NC='\033[0m'        # Resets the text color to default, no color
+
+# Function to display a spinning animation during the LLM processing
+spin_animation() {
+    local msg="$1"
+    # Only show animation if output is going to a terminal
+    if ! [ -t 1 ]; then
+        echo "$1..." # Just show the message without animation
+        return
+    fi
+
+    # Array of spinner characters for the animation
+    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    # Infinite loop to keep the animation running
+    while true; do
+        for i in "${spinner[@]}"; do
+            tput civis                                    # Hide the cursor to enhance the animation appearance
+            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
+            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
+            sleep 0.1                                     # Delay to control the speed of the animation
+            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
+        done
+    done
+}
+
+kill_spin() {
+    if [ -n "$SPIN_PID" ]; then
+        kill $SPIN_PID
+        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
+        SPIN_PID=
+        printf "\n"
+    fi
+}
+
+# Function to handle interrupts
+cleanup() {
+    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
+    kill_spin
+    tput cnorm # Show the cursor
+    exit 1
+}
+
+# A helper to create a temp file and exit on failure
+_create_temp_file() {
+    local temp_file
+    # Try for GNU mktemp with suffix support, but fall back to a portable version for systems like macOS.
+    temp_file=$(mktemp -q --suffix=.md 2>/dev/null || mktemp -q -t aipr)
+    if [[ -z "$temp_file" || ! -f "$temp_file" ]]; then
+        echo "Error: Failed to create temporary file." >&2
+        exit 1
+    fi
+    echo "$temp_file"
+}
+
+# Function to get the current head branch
+get_current_branch() {
+    git rev-parse --abbrev-ref HEAD
+}
+
+get_branch_remote() {
+    local branch="$1"
+    if [ -z "$branch" ]; then
+        exit 1
+    fi
+    local remote=$(git config --get "branch.$branch.remote")
+    if [ -z "$remote" ]; then
+        remote=$(select_remote)
+        if [ -z "$remote" ]; then
+            exit 1
+        fi
+    fi
+    echo "$remote"
+}
+
+select_remote() {
+    local remotes=($(git remote))
+    local remote_count=${#remotes[@]}
+
+    if [[ $remote_count -eq 0 ]]; then
+        echo "No git remotes found" >&2
+        return 1
+    elif [[ $remote_count -eq 1 ]]; then
+        echo "${remotes[0]}"
+        return 0
+    fi
+
+    echo "Available remotes:"
+    for i in "${!remotes[@]}"; do
+        printf "%d) %s\n" $((i + 1)) "${remotes[$i]}"
+    done
+
+    while true; do
+        read -p "Select remote (1-$remote_count): " choice
+        if [[ $choice =~ ^[0-9]+$ ]] && [[ $choice -ge 1 ]] && [[ $choice -le $remote_count ]]; then
+            echo "${remotes[$((choice - 1))]}"
+            return 0
+        fi
+        echo "Invalid selection" >&2
+    done
+}
+
+check_unpush() {
+    local branch=$1
+    local remote=$2
+
+    if ! git ls-remote --exit-code "$remote" &>/dev/null; then
+        return 1
+    fi
+    if ! git rev-parse --verify "$remote/$branch" >/dev/null 2>&1; then
+        return 1 # Remote branch doesn't exist yet, so nothing to push
+    fi
+
+    local unpush=$(git log "$remote/$branch"..HEAD --oneline)
+    if [ -n "$unpush" ]; then
+        return 1
+    fi
+    return 0
+}
+
+prompt_push() {
+    local branch="$1"
+    local remote="$2"
+
+    echo -e "\n${YELLOW}You have unpushed commits on branch '$branch'${NC}"
+    read -p "Do you want to push to '$remote/$branch'? [y/N] " choice
+
+    case "$choice" in
+        y | Y)
+            echo "Pushing to $remote/$branch..."
+            if git push "$remote" "$branch"; then
+                echo -e "${GREEN}Successfully pushed to $remote/$branch${NC}"
+                return 0
+            else
+                echo -e "${RED}Failed to push to $remote/$branch${NC}" >&2
+                return 1
+            fi
+            ;;
+        *)
+            echo -e "${YELLOW}Skipping push${NC}"
+            return 0
+            ;;
+    esac
+}
+
+is_git_repo() {
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+remote_2_url() {
+    git remote get-url "$1"
+}
+
+find_template() {
+    local templates=()
+    local template_dir template_file
+
+    # Check common template locations
+    [ -f ".github/pull_request_template.md" ] && templates+=(".github/pull_request_template.md")
+    [ -f "docs/pull_request_template.md" ] && templates+=("docs/pull_request_template.md")
+    [ -f "pull_request_template.md" ] && templates+=("pull_request_template.md")
+
+    # Check template directory
+    template_dir=".github/PULL_REQUEST_TEMPLATE"
+    if [ -d "$template_dir" ]; then
+        while IFS= read -r -d '' template_file; do
+            templates+=("$template_file")
+        done < <(find "$template_dir" -name '*.md' -print0)
+    fi
+
+    case ${#templates[@]} in
+        0)
+            echo ""
+            return 0
+            ;;
+        1)
+            echo "${templates[0]}"
+            return 0
+            ;;
+        *)
+            echo "Multiple PR templates found:" >&2
+            for i in "${!templates[@]}"; do
+                printf "%d) %s\n" $((i + 1)) "${templates[$i]}" >&2
+            done
+
+            while true; do
+                read -p "Select template (1-${#templates[@]}): " choice
+                if [[ $choice =~ ^[0-9]+$ ]] && [[ $choice -ge 1 ]] && [[ $choice -le ${#templates[@]} ]]; then
+                    echo "${templates[$((choice - 1))]}"
+                    return 0
+                fi
+                echo "Invalid selection" >&2
+            done
+            ;;
+    esac
+}
+
+# Function to display help message
+show_help() {
+    echo "Usage: aipr [options]"
+    echo ""
+    echo "FLAGS:"
+    echo "  -r, --remote <name>       The remote repository to use (default: origin)"
+    echo "  -B, --base <branch>       The branch into which you want your code merged"
+    echo "  -H, --head <branch>       The branch that contains commits for your pull request (default [current branch])"
+    echo "  -T, --template <file>     Specify a PR template file to use"
+    echo "  --prompt-title <file>     Path to PR title prompt template (default: $DEFAULT_PROMPT_TITLE)"
+    echo "  --prompt-body <file>      Path to PR body prompt template (default: $DEFAULT_PROMPT_BODY)"
+    echo "  --model <name>            LLM model to use for generating PR content"
+    echo "  --update-title            Update PR title when editing existing PR"
+    echo "  -h, --help                Show this help message"
+    echo ""
+    echo "ENVIRONMENT VARIABLES:"
+    echo "  LLM_PR_PROMPT_TITLE       Override default PR title prompt file path"
+    echo "  LLM_PR_PROMPT_BODY        Override default PR body prompt file path"
+    echo "  LLM_PR_MODEL              Set default LLM model for PR generation"
+    echo ""
+    echo "GH FLAGS"
+    echo "  All flags provided by 'gh pr create/edit' can be pass to the aipr command."
+}
+
+check_required_commands() {
+    local missing=0
+    for cmd in git gh jq llm; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo "Error: $cmd is not installed"
+            missing=$((missing + 1))
+        fi
+    done
+    return $missing
+}
+
+ongoing_pr() {
+    gh pr list --repo "$1" --head "$2" --json number --jq '.[0].number'
+}
+
+generate_title() {
+    DIFF="$1"
+    TEMP_FILE="$2"
+    spin_animation "Generating PR title" &
+    SPIN_PID=$!
+    TITLE=$(echo "$DIFF" | llm -s "$(cat "$PROMPT_TITLE")")
+    kill_spin
+
+    echo "$TITLE" >"$TEMP_FILE"
+    ${EDITOR:vi} "$TEMP_FILE"
+}
+
+generate_body() {
+    DIFF="$1"
+    TEMP_FILE="$2"
+    EXTRA_SYSTEM="$3"
+
+    SYSTEM=$(cat "$PROMPT_BODY")
+    if [ -n "$EXTRA_SYSTEM" ]; then
+        PROMPT=$(
+            cat <<EOF
+$SYSTEM
+
+$EXTRA_SYSTEM
+EOF
+        )
+    else
+        PROMPT="$SYSTEM"
+    fi
+
+    spin_animation "Generating PR Body" &
+    SPIN_PID=$!
+    BODY=$(echo "$DIFF" | llm -s "$PROMPT")
+    kill_spin
+
+    if [ -n "$BODY" ]; then
+        echo "$BODY" >"$TEMP_FILE"
+    fi
+    ${EDITOR:-vi} "$TEMP_FILE"
+}
+
+create_pr() {
+    DIFF="$1"
+    shift
+    echo -e "${YELLOW}Creating PR ${BLUE}${HEAD_OWNER}:${HEAD_BRANCH}${YELLOW} -> ${BLUE}${BASE_OWNER}:${BASE_BRANCH}${YELLOW}${NC}..."
+
+    TEMP_FILE=$(_create_temp_file)
+    generate_title "$DIFF" "$TEMP_FILE"
+    TITLE=$(cat "$TEMP_FILE")
+    rm -f "$TEMP_FILE"
+
+    TEMP_FILE=$(_create_temp_file)
+    EXTRA_SYSTEM=
+    if [ -f "$TEMPLATE" ]; then
+        TEMPLATE_CONTENT=$(cat "$TEMPLATE")
+        printf '%s' "$TEMPLATE_CONTENT" >"$TEMP_FILE"
+        EXTRA_SYSTEM=$(
+            cat <<EOF
+You should fill in the content based on the following template:
+$TEMPLATE_CONTENT
+EOF
+        )
+    fi
+
+    generate_body "$DIFF" "$TEMP_FILE" "$EXTRA_SYSTEM"
+
+    read -p "Create PR with these details? [y/N] " confirm
+    if [[ $confirm =~ ^[Yy]$ ]]; then
+        gh pr create -R "$BASE_REPO" -H "${HEAD_OWNER}:${HEAD_BRANCH}" -B "${BASE_BRANCH}" -t "$TITLE" -F "$TEMP_FILE" "$@"
+    else
+        echo "PR creation cancelled"
+    fi
+    rm -f "$TEMP_FILE"
+}
+
+update_pr() {
+    DIFF=$1
+    shift
+    echo -e "${YELLOW}Updating PR ${BLUE}${HEAD_OWNER}:${HEAD_BRANCH}${YELLOW} -> ${BLUE}${BASE_OWNER}:${BASE_BRANCH}${YELLOW}${NC}..."
+
+    SYSTEM=$(cat "$PROMPT_BODY")
+
+    extra_options=()
+    if [ "$UPDATE_TITLE" = 1 ]; then
+        TEMP_FILE=$(_create_temp_file)
+        generate_title "$DIFF" "$TEMP_FILE"
+        TITLE=$(cat "$TEMP_FILE")
+        rm -f "$TEMP_FILE"
+
+        extra_options+=(-t "$TITLE")
+    fi
+
+    OLD_BODY=$(gh pr view "$ONGOING" --json body --jq '.body')
+
+    EXTRA_SYSTEM=$(
+        cat <<EOF
+There are some old content, you should update the old content, you should follow the old content format:
+$OLD_BODY
+EOF
+    )
+
+    TEMP_FILE=$(_create_temp_file)
+    printf '%s' "$OLD_BODY" >"$TEMP_FILE"
+    generate_body "$DIFF" "$TEMP_FILE" "$EXTRA_SYSTEM"
+
+    read -p "Update PR #$ONGOING with these changes? [y/N] " confirm
+    if [[ $confirm =~ ^[Yy]$ ]]; then
+        gh pr edit "$ONGOING" -R "$BASE_REPO" -F "$TEMP_FILE" "${extra_options[@]}" "$@"
+    else
+        echo "PR update cancelled"
+    fi
+    rm -f "$TEMP_FILE"
+}
+
+DEFAULT_PROMPT_TITLE=~/.config/prompts/pr-title-prompt.txt
+if [ ! -f "$DEFAULT_PROMPT_TITLE" ]; then
+    DEFAULT_PROMPT_TITLE=$(brew --prefix)/share/aipr/prompts/pr-title-prompt.txt
+fi
+DEFAULT_PROMPT_BODY=~/.config/prompts/pr-body-prompt.txt
+if [ ! -f "$DEFAULT_PROMPT_BODY" ]; then
+    DEFAULT_PROMPT_BODY=$(brew --prefix)/share/aipr/prompts/pr-body-prompt.txt
+fi
+
+BASE_REMOTE=origin
+BASE_BRANCH=
+HEAD_BRANCH=$(get_current_branch)
+TEMPLATE=
+PROMPT_TITLE=${LLM_PR_PROMPT_TITLE:-$DEFAULT_PROMPT_TITLE}
+PROMPT_BODY=${LLM_PR_PROMPT_BODY:-$DEFAULT_PROMPT_BODY}
+MODEL=${LLM_PR_MODEL}
+UPDATE_TITLE=
+
+# Parse command line arguments manually
+# GH_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h | --help)
+            show_help
+            exit
+            ;;
+        -r | --remote)
+            # There remote repo to merge into
+            BASE_REMOTE="$2"
+            shift 2
+            ;;
+        -B | --base)
+            # There remote branch to merge into
+            BASE_BRANCH="$2"
+            shift 2
+            ;;
+        -H | --head)
+            HEAD_BRANCH="$2"
+            shift 2
+            ;;
+        -T | --template)
+            TEMPLATE="$2"
+            shift 2
+            ;;
+        --prompt-title)
+            PROMPT_TITLE="$2"
+            shift 2
+            ;;
+        --prompt-body)
+            PROMPT_BODY="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        --update-title)
+            UPDATE_TITLE=1
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [ ! -f "$PROMPT_TITLE" ]; then
+    echo "Prompt title file not found: $PROMPT_TITLE" >&2
+    exit 1
+fi
+if [ ! -f "$PROMPT_BODY" ]; then
+    echo "Prompt body file not found: $PROMPT_BODY" >&2
+    exit 1
+fi
+
+if [ -n "$MODEL" ]; then
+    export LLM_MODEL="$MODEL"
+fi
+
+trap cleanup SIGINT
+
+if ! check_required_commands; then
+    echo "Please install missing commands before proceeding" >&2
+    exit 1
+fi
+
+if ! is_git_repo; then
+    echo "Not in a Git repository" >&2
+    exit 1
+fi
+
+if ! git ls-remote --exit-code "$BASE_REMOTE" &>/dev/null; then
+    BASE_REMOTE=$(select_remote)
+fi
+
+spin_animation "Fetching new commits" &
+SPIN_PID=$!
+# fetch new commits
+git fetch "$BASE_REMOTE"
+kill_spin
+
+HEAD_REMOTE=$(get_branch_remote "$HEAD_BRANCH")
+HEAD_URL=$(remote_2_url "$HEAD_REMOTE")
+if ! HEAD_VIEW=$(gh repo view --json defaultBranchRef,name,owner "$HEAD_URL"); then
+    echo "Error: Failed to get repo info for head remote URL: $HEAD_URL" >&2
+    exit 1
+fi
+
+HEAD_OWNER=$(echo "$HEAD_VIEW" | jq -r '.owner.login')
+if [ -z "$HEAD_OWNER" ] || [ "$HEAD_OWNER" = "null" ]; then
+    echo "Error: Could not determine owner from repo info for $HEAD_URL" >&2
+    exit 1
+fi
+
+if ! check_unpush "$HEAD_BRANCH" "$HEAD_REMOTE"; then
+    prompt_push "$HEAD_BRANCH" "$HEAD_REMOTE"
+fi
+
+if [ "$HEAD_REMOTE" = "$BASE_REMOTE" ]; then
+    BASE_VIEW="$HEAD_VIEW"
+    BASE_URL="$HEAD_URL"
+else
+    BASE_URL=$(remote_2_url "$BASE_REMOTE")
+    if ! BASE_VIEW=$(gh repo view --json defaultBranchRef,name,owner "$BASE_URL"); then
+        echo "Error: Failed to get repo info for base remote URL: $BASE_URL" >&2
+        exit 1
+    fi
+fi
+
+BASE_OWNER=$(echo "$BASE_VIEW" | jq -r '.owner.login')
+if [ -z "$BASE_OWNER" ] || [ "$BASE_OWNER" = "null" ]; then
+    echo "Error: Could not determine owner from repo info for $BASE_URL" >&2
+    exit 1
+fi
+BASE_NAME=$(echo "$BASE_VIEW" | jq -r '.name')
+if [ -z "$BASE_NAME" ] || [ "$BASE_NAME" = "null" ]; then
+    echo "Error: Could not determine repo name from repo info for $BASE_URL" >&2
+    exit 1
+fi
+
+BASE_REPO="$BASE_OWNER/$BASE_NAME"
+
+if [ -z "$BASE_BRANCH" ]; then
+    BASE_BRANCH=$(echo "$BASE_VIEW" | jq -r '.defaultBranchRef.name')
+fi
+
+# Get the changes between $HEAD_REMOTE/$HEAD_BRANCH and $BASE_REMOTE/$BASE_BRANCH
+DIFF=$(git diff "remotes/$BASE_REMOTE/$BASE_BRANCH...remotes/$HEAD_REMOTE/$HEAD_BRANCH")
+
+if [ -z "$DIFF" ]; then
+    exit 0
+fi
+
+ONGOING=$(ongoing_pr "$BASE_REPO" "$HEAD_BRANCH")
+
+if [ -z "$TEMPLATE" ]; then
+    TEMPLATE=$(find_template)
+fi
+
+if [ -z "$ONGOING" ]; then
+    create_pr "$DIFF" "$@"
+else
+    update_pr "$DIFF" "$@"
+fi
