@@ -19,7 +19,7 @@ _aipr() {
             _describe -t remote 'remote' arr
             ;;
         bases)
-            base=($(git branch -r --format='%(refname:short)' | grep -v 'HEAD' | sed 's/[^\/]\+\/\(.*\)/\1/'))
+            base=($(git branch -r --format='%(refname:short)' | grep -v 'HEAD' | cut -d/ -f2-))
             _describe -t base 'base' base
             ;;
         branches)

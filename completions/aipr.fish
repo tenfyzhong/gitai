@@ -3,7 +3,7 @@ function _aipr_models
 end
 
 function _aipr_bases
-    git branch -r --format='%(refname:short)' | grep -v 'HEAD' | sed 's/[^\/]\+\/\(.*\)/\1/'
+    git branch -r --format='%(refname:short)' | grep -v HEAD | cut -d/ -f2-
 end
 
 complete -c aipr -f
