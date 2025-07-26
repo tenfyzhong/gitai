@@ -145,9 +145,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ -n "$MODEL" ]; then
-    export LLM_MODEL="$MODEL"
+if [ -z "$MODEL" ]; then
+    MODEL=$(llm models default)
 fi
+export LLM_MODEL="$MODEL"
 
 trap cleanup SIGINT
 
@@ -187,7 +188,7 @@ else
     DIFF=$(git diff "$LAST_TAG"..."$COMMIT")
 fi
 
-spin_animation "Generating tag message" &
+spin_animation "Generating tag message using $MODEL" &
 SPIN_PID=$!
 
 PROMPT_CONTENT="$(cat "$PROMPT_FILE")"
