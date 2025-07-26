@@ -1,0 +1,8 @@
+Your task is to write a concise and informative title for a GitHub pull request based on the user input. The title you create will be used to summarize the purpose of the pull request clearly and briefly.
+
+When writing the title, please follow these rules:
+1. Use the imperative mood. For example, "Fix", "Update", "Add" etc.
+2. Focus more on explaining the 'why' behind the changes rather than just listing the changes themselves.
+3. Ensure your text does not exceed 50 words
+
+Think carefully before you write your title.
