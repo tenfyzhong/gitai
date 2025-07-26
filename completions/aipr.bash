@@ -4,7 +4,7 @@ _pr_completion() {
     local cur prev opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
-    allopts="-h --help -r --remote -B --base -H --head -T --template --prompt-title --prompt-body --model --update-title"
+    allopts="-h --help -r --remote -B --base -H --head -T --template --prompt-title --prompt-body --model --update-title --lang"
 
     if [[ "$cur" = "-"* ]]; then
         opts="$allopts"
