@@ -8,7 +8,7 @@ YELLOW='\033[0;33m' # Sets text to yellow
 BLUE='\033[0;34m'   # Sets text to blue
 NC='\033[0m'        # Resets the text color to default, no color
 
-DEFAULT_PROMPT_FILE=~/.config/gitai/prompts/aitag-prompt.txt
+DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/aitag-prompt.txt
 
 check_required_commands() {
     local missing=0
@@ -95,6 +95,10 @@ init_config() {
             echo "Can't find a default configuration file. Please create one at $DEFAULT_PROMPT_FILE" >&2
             exit 1
         fi
+
+        dir=$(dirname "$DEFAULT_PROMPT_FILE")
+        mkdir -p "$dir"
+        cp "$brew_prompt" "$DEFAULT_PROMPT_FILE"
     fi
 }
 
@@ -191,6 +195,10 @@ fi
 spin_animation "Generating tag message using $MODEL" &
 SPIN_PID=$!
 
+if [ ! -f "$PROMPT_FILE" ]; then
+    echo -e "${RED}Error: Prompt file not found: $PROMPT_FILE${NC}" >&2
+    exit 1
+fi
 PROMPT_CONTENT="$(cat "$PROMPT_FILE")"
 PROMPT=$(
     cat <<EOF

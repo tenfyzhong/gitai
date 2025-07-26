@@ -8,8 +8,8 @@ YELLOW='\033[0;33m' # Sets text to yellow
 BLUE='\033[0;34m'   # Sets text to blue
 NC='\033[0m'        # Resets the text color to default, no color
 
-DEFAULT_TITLE_PROMPT=~/.config/gitai/prompts/aipr-title-prompt.txt
-DEFAULT_BODY_PROMPT=~/.config/gitai/prompts/aipr-body-prompt.txt
+DEFAULT_TITLE_PROMPT=$HOME/.config/gitai/prompts/aipr-title-prompt.txt
+DEFAULT_BODY_PROMPT=$HOME/.config/gitai/prompts/aipr-body-prompt.txt
 
 SPIN_PID=
 
@@ -289,6 +289,10 @@ generate_title() {
     spin_animation "Generating PR title using $MODEL..." &
     SPIN_PID=$!
 
+    if [ ! -f "$PROMPT_TITLE" ]; then
+        echo -e "${RED}Error: Prompt file not found: $PROMPT_TITLE${NC}" >&2
+        exit 1
+    fi
     PROMPT_FILE_CONTENT=$(cat "$PROMPT_TITLE")
     PROMPT=$(
         cat <<EOF
@@ -310,6 +314,10 @@ generate_body() {
     TEMP_FILE="$2"
     EXTRA_SYSTEM="$3"
 
+    if [ ! -f "$PROMPT_BODY" ]; then
+        echo -e "${RED}Error: Prompt file not found: $PROMPT_BODY${NC}" >&2
+        exit 1
+    fi
     SYSTEM=$(cat "$PROMPT_BODY")
     if [ -n "$EXTRA_SYSTEM" ]; then
         PROMPT=$(

@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+# Exit if the `SKIP_AI_COMMIT_MSG_HOOK` environment variable is set
+if [ -n "$GITAI_SKIP_AI_COMMIT_MSG_HOOK" ]; then
+    exit 0
+fi
+
+# ANSI color codes for styling the output
+RED='\033[0;31m'    # Sets text to red
+GREEN='\033[0;32m'  # Sets text to green
+YELLOW='\033[0;33m' # Sets text to yellow
+BLUE='\033[0;34m'   # Sets text to blue
+NC='\033[0m'        # Resets the text color to default, no color
+
+DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/ai-commit-msg-prompt.txt
+
+# Function to display a spinning animation during the LLM processing
+spin_animation() {
+    local msg="$1"
+    # Only show animation if output is going to a terminal
+    if ! [ -t 1 ]; then
+        echo "$1..." # Just show the message without animation
+        return
+    fi
+
+    # Array of spinner characters for the animation
+    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    # Infinite loop to keep the animation running
+    while true; do
+        for i in "${spinner[@]}"; do
+            tput civis                                    # Hide the cursor to enhance the animation appearance
+            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
+            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
+            sleep 0.1                                     # Delay to control the speed of the animation
+            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
+        done
+    done
+}
+
+kill_spin() {
+    if [ -n "$SPIN_PID" ]; then
+        kill $SPIN_PID
+        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
+        SPIN_PID=
+        printf "\n"
+    fi
+}
+
+# Function to handle interrupts
+cleanup() {
+    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
+    kill_spin
+    tput cnorm # Show the cursor
+    exit 1
+}
+
+init_config() {
+    if [ ! -f "$DEFAULT_PROMPT_FILE" ]; then
+        brew_prompt=$(brew --prefix)/share/gitai/prompts/ai-commit-msg-prompt.txt
+        if [ ! -f "$brew_prompt" ]; then
+            echo "Can't find a default configuration file. Please create one at $DEFAULT_PROMPT_FILE" >&2
+            exit 1
+        fi
+
+        dir=$(dirname "$DEFAULT_PROMPT_FILE")
+        mkdir -p "$dir"
+        cp "$brew_prompt" "$DEFAULT_PROMPT_FILE"
+    fi
+}
+
+init_config
+
+trap cleanup SIGINT
+
+# Check if the commit is a merge commit based on the presence of a second argument
+if [ -n "$2" ]; then
+    exit 0 # Exit script if it's a merge commit, no custom message needed
+fi
+
+# Check if the `llm` command is installed
+if ! command -v llm &>/dev/null; then
+    echo -e "${RED}Error: 'llm' command is not installed. Please install it and try again.${NC}"
+    exit 1
+fi
+
+# The LLM command will use the model by the environment `MODEL`
+MODEL=${GITAI_MODEL}
+if [ -z "$MODEL" ]; then
+    MODEL=$(llm models default)
+fi
+export LLM_MODEL="$MODEL"
+
+PROMPT_FILE=${GITAI_COMMIT_MSG_PROMPT:-$DEFAULT_PROMPT_FILE}
+LANGUAGE=${GITAI_LANGUAGE:-English}
+
+if [ ! -f "$PROMPT_FILE" ]; then
+    echo -e "${RED}Error: Prompt file not found: $PROMPT_FILE${NC}" >&2
+    exit 1
+fi
+PROMPT_CONTENT="$(cat "$PROMPT_FILE")"
+PROMPT=$(
+    cat <<EOF
+All non-code text responses must be written in the $LANGUAGE language indicated.
+
+$PROMPT_CONTENT
+EOF
+)
+
+# Start the spinning animation in the background
+spin_animation "Generating LLM commit message using $MODEL" &
+SPIN_PID=$!
+
+# Generate the commit message using `git diff` piped into `llm` command
+# The LLM command takes a system prompt from a file as input
+if ! commit_msg=$(git diff --cached | llm -s "$PROMPT" 2>&1); then
+    # Stop the spinning animation by killing its process
+    kill_spin
+
+    # Finalizing output
+    tput cnorm  # Show the cursor again
+    printf "\n" # Move the cursor to the next line
+
+    printf "${RED}Error: 'llm' command failed to generate the commit message:\\n${commit_msg}${NC}\\n\\nManually set the commit message"
+    exit 1
+fi
+
+# Stop the spinning animation by killing its process
+kill_spin
+
+# Display the generated commit message with color-coded headings
+# echo -e "${BLUE}=== Generated Commit Message ===${NC}"
+# echo -e "${GREEN}$commit_msg${NC}"
+# echo -e "${BLUE}=================================${NC}"
+# echo
+
+# Write the generated commit message to the specified file (usually the commit message file in .git)
+echo "$commit_msg" >"$1"
