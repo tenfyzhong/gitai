@@ -2,10 +2,6 @@ function _aitag_models
     llm models | grep -v '^Default' | sed 's/^[^:]*: \([^(]*\)\( (.*)\)\?/\1/'
 end
 
-function _aitag_user
-    gpg --list-secret-keys --keyid-format LONG | grep uid | awk '{print $3}' | sort | uniq
-end
-
 complete -c aitag -f
 complete -c aitag -s h -l help -d "Show help message"
 complete -c aitag -s a -l annotate -d "Create annotated tag"
