@@ -95,6 +95,10 @@ init_config() {
             echo "Can't find a default configuration file. Please create one at $DEFAULT_PROMPT_FILE" >&2
             exit 1
         fi
+
+        dir=$(dirname "$DEFAULT_PROMPT_FILE")
+        mkdir -p "$dir"
+        cp "$brew_prompt" "$DEFAULT_PROMPT_FILE"
     fi
 }
 
