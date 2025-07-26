@@ -90,8 +90,8 @@ show_help() {
 
 init_config() {
     if [ ! -f "$DEFAULT_PROMPT_FILE" ]; then
-        brew_title_prompt=$(brew --prefix)/share/gitai/prompts/aitag-prompt.txt
-        if [ ! -f "$brew_title_prompt" ]; then
+        brew_prompt=$(brew --prefix)/share/gitai/prompts/aitag-prompt.txt
+        if [ ! -f "$brew_prompt" ]; then
             echo "Can't find a default configuration file. Please create one at $DEFAULT_PROMPT_FILE" >&2
             exit 1
         fi
