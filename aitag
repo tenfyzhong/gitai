@@ -178,7 +178,7 @@ if ! git rev-parse --verify "$COMMIT" >/dev/null 2>&1; then
     exit 1
 fi
 
-LAST_TAG=$(git tag | sort | tail -n1)
+LAST_TAG=$(git tag --sort=-v:refname | head -n1)
 
 DIFF=
 if [ -z "$LAST_TAG" ]; then
