@@ -504,7 +504,7 @@ if [ -z "$HEAD_OWNER" ] || [ "$HEAD_OWNER" = "null" ]; then
 fi
 
 if ! check_unpush "$HEAD_BRANCH" "$HEAD_REMOTE"; then
-    prompt_push "$HEAD_BRANCH" "$HEAD_REMOTE"
+    prompt_push "$HEAD_BRANCH" "$HEAD_REMOTE" || exit 1
 fi
 
 if [ "$HEAD_REMOTE" = "$BASE_REMOTE" ]; then
