@@ -13,6 +13,9 @@ DEFAULT_BODY_PROMPT=~/.config/gitai/prompts/aipr-body-prompt.txt
 
 SPIN_PID=
 
+TEMP_FILES=()
+trap 'rm -f "${TEMP_FILES[@]}"' EXIT SIGINT TERM
+
 # Function to display a spinning animation during the LLM processing
 spin_animation() {
     local msg="$1"
@@ -63,6 +66,7 @@ create_temp_file() {
         echo "Error: Failed to create temporary file." >&2
         exit 1
     fi
+    TEMP_FILES+=("$temp_file")
     echo "$temp_file"
 }
 
@@ -322,7 +326,6 @@ create_pr() {
     TEMP_FILE=$(create_temp_file "title.md")
     generate_title "$DIFF" "$TEMP_FILE"
     TITLE=$(cat "$TEMP_FILE")
-    rm -f "$TEMP_FILE"
 
     TEMP_FILE=$(create_temp_file "body.md")
     EXTRA_SYSTEM=
@@ -345,7 +348,6 @@ EOF
     else
         echo "PR creation cancelled"
     fi
-    rm -f "$TEMP_FILE"
 }
 
 update_pr() {
@@ -360,7 +362,6 @@ update_pr() {
         TEMP_FILE=$(create_temp_file "title.md")
         generate_title "$DIFF" "$TEMP_FILE"
         TITLE=$(cat "$TEMP_FILE")
-        rm -f "$TEMP_FILE"
 
         extra_options+=(-t "$TITLE")
     fi
@@ -384,7 +385,6 @@ EOF
     else
         echo "PR update cancelled"
     fi
-    rm -f "$TEMP_FILE"
 }
 
 init_config
