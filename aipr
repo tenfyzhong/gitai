@@ -480,13 +480,17 @@ if ! git ls-remote --exit-code "$BASE_REMOTE" &>/dev/null; then
     BASE_REMOTE=$(select_remote)
 fi
 
+HEAD_REMOTE=$(get_branch_remote "$HEAD_BRANCH")
+
 spin_animation "Fetching new commits" &
 SPIN_PID=$!
 # fetch new commits
 git fetch "$BASE_REMOTE"
+if [ "$HEAD_REMOTE" != "$BASE_REMOTE" ]; then
+    git fetch "$HEAD_REMOTE"
+fi
 kill_spin
 
-HEAD_REMOTE=$(get_branch_remote "$HEAD_BRANCH")
 HEAD_URL=$(remote_2_url "$HEAD_REMOTE")
 if ! HEAD_VIEW=$(gh repo view --json defaultBranchRef,name,owner "$HEAD_URL"); then
     echo "Error: Failed to get repo info for head remote URL: $HEAD_URL" >&2
