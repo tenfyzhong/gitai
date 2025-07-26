@@ -247,7 +247,7 @@ init_config() {
 
     if [ ! -f "$DEFAULT_BODY_PROMPT" ]; then
         brew_body_prompt=$(brew --prefix)/share/gitai/prompts/aipr-body-prompt.txt
-        if [ ! -f "brew_body_prompt" ]; then
+        if [ ! -f "$brew_body_prompt" ]; then
             echo "Can't find a default configuration file. Please create one at $DEFAULT_BODY_PROMPT" >&2
             exit 1
         fi
