@@ -93,6 +93,10 @@ export LLM_MODEL="$MODEL"
 PROMPT_FILE=${GITAI_COMMIT_MSG_PROMPT:-$DEFAULT_PROMPT_FILE}
 LANGUAGE=${GITAI_LANGUAGE:-English}
 
+if [ ! -f "$PROMPT_FILE" ]; then
+    echo -e "${RED}Error: Prompt file not found: $PROMPT_FILE${NC}" >&2
+    exit 1
+fi
 PROMPT_CONTENT="$(cat "$PROMPT_FILE")"
 PROMPT=$(
     cat <<EOF
