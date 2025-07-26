@@ -25,6 +25,7 @@ _aitag() {
             ;;
         --model)
             opts=$(llm models | grep -v '^Default' | sed 's/^[^:]*: \([^(]*\)\( (.*)\)\?/\1/')
+            COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
             ;;
     esac
 

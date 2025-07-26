@@ -1,4 +1,4 @@
-Write short commit messages:
+Write a descriptive tag message:
 - The first line should be a short summary of the changes
     * Use the imperative mood. For example, "Fix", "Update", "Add" etc.
     * Ensure your text does not exceed 50 words
@@ -16,4 +16,4 @@ Summary of changes
 - changes
 - changes
 
-What you write will be passed directly to git tag -m "[message]"
+What you write will be passed directly to git tag -F "[file]"
