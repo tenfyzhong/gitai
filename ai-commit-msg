@@ -37,6 +37,23 @@ spin_animation() {
     done
 }
 
+kill_spin() {
+    if [ -n "$SPIN_PID" ]; then
+        kill $SPIN_PID
+        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
+        SPIN_PID=
+        printf "\n"
+    fi
+}
+
+# Function to handle interrupts
+cleanup() {
+    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
+    kill_spin
+    tput cnorm # Show the cursor
+    exit 1
+}
+
 init_config() {
     if [ ! -f "$DEFAULT_PROMPT_FILE" ]; then
         brew_prompt=$(brew --prefix)/share/gitai/prompts/ai-commit-msg-prompt.txt
@@ -52,6 +69,8 @@ init_config() {
 }
 
 init_config
+
+trap cleanup SIGINT
 
 # Check if the commit is a merge commit based on the presence of a second argument
 if [ -n "$2" ]; then
@@ -85,14 +104,13 @@ EOF
 
 # Start the spinning animation in the background
 spin_animation "Generating LLM commit message using $MODEL" &
-spin_pid=$! # Capture the process ID of the spinning animation
+SPIN_PID=$!
 
 # Generate the commit message using `git diff` piped into `llm` command
 # The LLM command takes a system prompt from a file as input
 if ! commit_msg=$(git diff --cached | llm -s "$PROMPT" 2>&1); then
     # Stop the spinning animation by killing its process
-    kill $spin_pid
-    wait $spin_pid 2>/dev/null # Wait for the process to terminate and suppress error messages
+    kill_spin
 
     # Finalizing output
     tput cnorm  # Show the cursor again
@@ -103,12 +121,7 @@ if ! commit_msg=$(git diff --cached | llm -s "$PROMPT" 2>&1); then
 fi
 
 # Stop the spinning animation by killing its process
-kill $spin_pid
-wait $spin_pid 2>/dev/null # Wait for the process to terminate and suppress error messages
-
-# Finalizing output
-tput cnorm # Show the cursor again
-echo       # Move the cursor to the next line
+kill_spin
 
 # Display the generated commit message with color-coded headings
 # echo -e "${BLUE}=== Generated Commit Message ===${NC}"
