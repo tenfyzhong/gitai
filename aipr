@@ -282,7 +282,7 @@ generate_title() {
     kill_spin
 
     echo "$TITLE" >"$TEMP_FILE"
-    ${EDITOR:vi} "$TEMP_FILE"
+    ${EDITOR:-vi} "$TEMP_FILE"
 }
 
 generate_body() {
