@@ -16,16 +16,23 @@ DEFAULT_PROMPT_FILE=~/.config/gitai/prompts/ai-commit-msg-prompt.txt
 
 # Function to display a spinning animation during the LLM processing
 spin_animation() {
+    local msg="$1"
+    # Only show animation if output is going to a terminal
+    if ! [ -t 1 ]; then
+        echo "$1..." # Just show the message without animation
+        return
+    fi
+
     # Array of spinner characters for the animation
-    spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
     # Infinite loop to keep the animation running
     while true; do
         for i in "${spinner[@]}"; do
-            tput civis                                                                     # Hide the cursor to enhance the animation appearance
-            tput el1                                                                       # Clear the line from the cursor to the beginning to display the spinner
-            printf "\r${YELLOW}%s${NC} Generating LLM commit message using $MODEL..." "$i" # Print the spinner and message
-            sleep 0.1                                                                      # Delay to control the speed of the animation
-            tput cub 32                                                                    # Move the cursor back 32 columns to reset the spinner position
+            tput civis                                    # Hide the cursor to enhance the animation appearance
+            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
+            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
+            sleep 0.1                                     # Delay to control the speed of the animation
+            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
         done
     done
 }
@@ -77,7 +84,7 @@ EOF
 )
 
 # Start the spinning animation in the background
-spin_animation &
+spin_animation "Generating LLM commit message using $MODEL" &
 spin_pid=$! # Capture the process ID of the spinning animation
 
 # Generate the commit message using `git diff` piped into `llm` command
