@@ -13,3 +13,4 @@ complete -c aitag -s s -l sign -d "Create signed tag"
 complete -c aitag -s u -l local-user -d "Create tag with specific user" -x -a "(git config --get-regexp user.name | cut -d' ' -f2)"
 complete -c aitag -l prompt -d "Use custom prompt file" -r -F
 complete -c aitag -l model -d "Specify LLM model to use" -x -a "(_aitag_models)"
+complete -c aitag -l lang -d "Generate content in specified language (default: English)"

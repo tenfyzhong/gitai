@@ -73,11 +73,13 @@ show_help() {
     echo "  -u, --local-user USER Create tag with specific user"
     echo "  --prompt FILE         Use custom prompt file"
     echo "  --model MODEL         Specify LLM model to use"
+    echo "  --lang <lang>         Generate content in specified language (default: English)"
     echo "  -h, --help            Show this help message"
     echo
     echo "ENVIRONMENT VARIABLES:"
     echo "  GITAI_TAG_PROMPT       Default prompt file path (default: $DEFAULT_PROMPT_FILE)"
     echo "  GITAI_MODEL            Set default LLM model for PR generation"
+    echo "  GITAI_LANG             Set default language for generation"
     echo
     echo "EXAMPLES:"
     echo "  aitag v1.0.0                    # Tag HEAD commit as v1.0.0"
@@ -99,8 +101,9 @@ init_config() {
 init_config
 
 TAG_OPTS=()
-PROMPT=${GITAI_TAG_PROMPT:-$DEFAULT_PROMPT_FILE}
+PROMPT_FILE=${GITAI_TAG_PROMPT:-$DEFAULT_PROMPT_FILE}
 MODEL=${GITAI_MODEL}
+LANGUAGE=${GITAI_LANGUAGE:-English}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -121,12 +124,20 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --prompt)
-            PROMPT="$2"
+            PROMPT_FILE="$2"
             shift 2
             ;;
         --model)
             MODEL="$2"
             shift 2
+            ;;
+        --lang)
+            LANGUAGE="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
             ;;
         *)
             break
@@ -178,7 +189,17 @@ fi
 
 spin_animation "Generating tag message" &
 SPIN_PID=$!
-MSG=$(echo "$DIFF" | llm -s "$(cat "$PROMPT")")
+
+PROMPT_CONTENT="$(cat "$PROMPT_FILE")"
+PROMPT=$(
+    cat <<EOF
+All non-code text responses must be written in the $LANGUAGE language indicated.
+
+$PROMPT_CONTENT
+EOF
+)
+
+MSG=$(echo "$DIFF" | llm -s "$PROMPT")
 kill_spin
 
 TEMP=$(mktemp -q)
