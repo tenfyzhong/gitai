@@ -8,8 +8,8 @@ YELLOW='\033[0;33m' # Sets text to yellow
 BLUE='\033[0;34m'   # Sets text to blue
 NC='\033[0m'        # Resets the text color to default, no color
 
-DEFAULT_TITLE_PROMPT=~/.config/gitai/prompts/aipr-title-prompt.txt
-DEFAULT_BODY_PROMPT=~/.config/gitai/prompts/aipr-body-prompt.txt
+DEFAULT_TITLE_PROMPT=$HOME/.config/gitai/prompts/aipr-title-prompt.txt
+DEFAULT_BODY_PROMPT=$HOME/.config/gitai/prompts/aipr-body-prompt.txt
 
 SPIN_PID=
 
