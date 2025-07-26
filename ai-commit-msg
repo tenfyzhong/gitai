@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Exit if the `SKIP_AI_COMMIT_MSG_HOOK` environment variable is set
-if [ -n "$SKIP_AI_COMMIT_MSG_HOOK" ]; then
+if [ -n "$GITAI_SKIP_AI_COMMIT_MSG_HOOK" ]; then
     exit 0
 fi
 
