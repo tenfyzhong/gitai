@@ -17,10 +17,10 @@ _pr_completion() {
             opts=$(git remote)
             ;;
         -B | --base)
-            opts=($(git branch -r --format='%(refname:short)' | grep -v 'HEAD' | cut -d/ -f2-))
+            opts="$(git branch -r --format='%(refname:short)' | grep -v 'HEAD' | cut -d/ -f2-)"
             ;;
         -H | --head)
-            opts=$(git branch --format='%(refname:short)')
+            opts="$(git branch --format='%(refname:short)')"
             ;;
         -T | --template)
             compopt -o filenames
