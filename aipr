@@ -49,7 +49,7 @@ cleanup() {
 }
 
 # A helper to create a temp file and exit on failure
-_create_temp_file() {
+create_temp_file() {
     local temp_file
     # Try for GNU mktemp with suffix support, but fall back to a portable version for systems like macOS.
     temp_file=$(mktemp -q --suffix=.md 2>/dev/null || mktemp -q -t aipr)
@@ -287,12 +287,12 @@ create_pr() {
     shift
     echo -e "${YELLOW}Creating PR ${BLUE}${HEAD_OWNER}:${HEAD_BRANCH}${YELLOW} -> ${BLUE}${BASE_OWNER}:${BASE_BRANCH}${YELLOW}${NC}..."
 
-    TEMP_FILE=$(_create_temp_file)
+    TEMP_FILE=$(create_temp_file)
     generate_title "$DIFF" "$TEMP_FILE"
     TITLE=$(cat "$TEMP_FILE")
     rm -f "$TEMP_FILE"
 
-    TEMP_FILE=$(_create_temp_file)
+    TEMP_FILE=$(create_temp_file)
     EXTRA_SYSTEM=
     if [ -f "$TEMPLATE" ]; then
         TEMPLATE_CONTENT=$(cat "$TEMPLATE")
@@ -325,7 +325,7 @@ update_pr() {
 
     extra_options=()
     if [ "$UPDATE_TITLE" = 1 ]; then
-        TEMP_FILE=$(_create_temp_file)
+        TEMP_FILE=$(create_temp_file)
         generate_title "$DIFF" "$TEMP_FILE"
         TITLE=$(cat "$TEMP_FILE")
         rm -f "$TEMP_FILE"
@@ -342,7 +342,7 @@ $OLD_BODY
 EOF
     )
 
-    TEMP_FILE=$(_create_temp_file)
+    TEMP_FILE=$(create_temp_file)
     printf '%s' "$OLD_BODY" >"$TEMP_FILE"
     generate_body "$DIFF" "$TEMP_FILE" "$EXTRA_SYSTEM"
 
