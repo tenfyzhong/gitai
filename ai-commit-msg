@@ -143,7 +143,13 @@ TMP_FILE=$(mktemp)
 if [ -z "$TMP_FILE" ]; then
     exit 1
 fi
-trap "rm -f $TMP_FILE" EXIT
-echo "$commit_msg" >"$TMP_FILE"
-cat "$1" >>"$TMP_FILE"
-mv "$TMP_FILE" "$1"
+trap 'rm -f -- "$TMP_FILE"' EXIT
+
+if ! {
+    echo "$commit_msg"
+    cat -- "$1"
+} >"$TMP_FILE"; then
+    echo "Error: Failed to stage new commit message, preserving original." >&2
+    exit 1
+fi
+mv -- "$TMP_FILE" "$1"
