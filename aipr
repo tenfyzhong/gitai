@@ -286,7 +286,7 @@ ongoing_pr() {
 generate_title() {
     DIFF="$1"
     TEMP_FILE="$2"
-    spin_animation "Generating PR title using $MODEL..." &
+    spin_animation "Generating PR title using $MODEL" &
     SPIN_PID=$!
 
     if [ ! -f "$PROMPT_TITLE" ]; then
@@ -333,7 +333,7 @@ EOF
         PROMPT="$SYSTEM"
     fi
 
-    spin_animation "Generating PR Body using $MODEL..." &
+    spin_animation "Generating PR Body using $MODEL" &
     SPIN_PID=$!
     BODY=$(echo "$DIFF" | llm -s "$PROMPT")
     kill_spin
@@ -357,7 +357,6 @@ create_pr() {
     EXTRA_SYSTEM=
     if [ -f "$TEMPLATE" ]; then
         TEMPLATE_CONTENT=$(cat "$TEMPLATE")
-        printf '%s' "$TEMPLATE_CONTENT" >"$TEMP_FILE"
         EXTRA_SYSTEM=$(
             cat <<EOF
 You should fill in the content based on the following template:
