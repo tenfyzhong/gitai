@@ -139,4 +139,11 @@ kill_spin
 # echo
 
 # Write the generated commit message to the specified file (usually the commit message file in .git)
-echo "$commit_msg" >"$1"
+TMP_FILE=$(mktemp)
+if [ -z "$TMP_FILE" ]; then
+    exit 1
+fi
+trap "rm -f $TMP_FILE" EXIT
+echo "$commit_msg" >"$TMP_FILE"
+cat "$1" >>"$TMP_FILE"
+mv "$TMP_FILE" "$1"
