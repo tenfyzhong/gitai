@@ -14,6 +14,25 @@ NC='\033[0m'        # Resets the text color to default, no color
 
 DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/ai-commit-msg-prompt.txt
 
+# Function to display help message
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Automatically generates a commit message for staged changes using an LLM.
+This script is typically used as a 'prepare-commit-msg' Git hook.
+
+Options:
+  -h, --help    Display this help message and exit.
+
+Environment Variables:
+  GITAI_SKIP_AI_COMMIT_MSG_HOOK  If set to a non-empty value, the script will exit without generating a message.
+  GITAI_MODEL                    Specifies the LLM model to use (e.g., 'gpt-4o'). Defaults to the model set as default in the 'llm' tool.
+  GITAI_COMMIT_MSG_PROMPT        Path to a custom prompt file. Defaults to '$DEFAULT_PROMPT_FILE'.
+  GITAI_LANGUAGE                 The language for the generated commit message. Defaults to 'English'.
+EOF
+}
+
 # Function to display a spinning animation during the LLM processing
 spin_animation() {
     local msg="$1"
@@ -72,6 +91,12 @@ init_config
 
 trap cleanup SIGINT
 
+# Parse command-line arguments for help flag
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
 # Check if the commit is a merge commit based on the presence of a second argument
 if [ -n "$2" ]; then
     exit 0 # Exit script if it's a merge commit, no custom message needed
@@ -125,7 +150,7 @@ if ! commit_msg=$(echo "$diff" | llm -s "$PROMPT" 2>&1); then
     tput cnorm  # Show the cursor again
     printf "\n" # Move the cursor to the next line
 
-    printf "${RED}Error: 'llm' command failed to generate the commit message:\\n${commit_msg}${NC}\\n\\nManually set the commit message"
+    printf "${RED}Error: 'llm' command failed to generate the commit message:\n${commit_msg}${NC}\n\nManually set the commit message"
     exit 1
 fi
 
