@@ -29,7 +29,7 @@ Environment Variables:
   GITAI_SKIP_AI_COMMIT_MSG_HOOK  If set to a non-empty value, the script will exit without generating a message.
   GITAI_MODEL                    Specifies the LLM model to use (e.g., 'gpt-4o'). Defaults to the model set as default in the 'llm' tool.
   GITAI_COMMIT_MSG_PROMPT        Path to a custom prompt file. Defaults to '$DEFAULT_PROMPT_FILE'.
-  GITAI_LANGUAGE                 The language for the generated commit message. Defaults to 'English'.
+  GITAI_LANG                     The language for the generated commit message. Defaults to 'English'.
 EOF
 }
 
@@ -116,7 +116,7 @@ fi
 export LLM_MODEL="$MODEL"
 
 PROMPT_FILE=${GITAI_COMMIT_MSG_PROMPT:-$DEFAULT_PROMPT_FILE}
-LANGUAGE=${GITAI_LANGUAGE:-English}
+LANGUAGE=${GITAI_LANG:-English}
 
 if [ ! -f "$PROMPT_FILE" ]; then
     echo -e "${RED}Error: Prompt file not found: $PROMPT_FILE${NC}" >&2

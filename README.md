@@ -108,7 +108,7 @@ You can specify a custom prompt file using the `--prompt` flag for `aitag`, and 
 ## Environment Variables
 
 * `GITAI_MODEL`: Set the default LLM model to use.
-* `GITAI_LANGUAGE`: Set the default language for generation.
+* `GITAI_LANG`: Set the default language for generation.
 * `GITAI_COMMIT_MSG_PROMPT`: Override the default commit message prompt file path.
 * `GITAI_PR_PROMPT_TITLE`: Override the default PR title prompt file path.
 * `GITAI_PR_PROMPT_BODY`: Override the default PR body prompt file path.
