@@ -79,7 +79,7 @@ show_help() {
     echo "ENVIRONMENT VARIABLES:"
     echo "  GITAI_TAG_PROMPT       Default prompt file path (default: $DEFAULT_PROMPT_FILE)"
     echo "  GITAI_MODEL            Set default LLM model for PR generation"
-    echo "  GITAI_LANG             Set default language for generation"
+    echo "  GITAI_LANG             The language for the generated commit message. Defaults to 'English'."
     echo
     echo "EXAMPLES:"
     echo "  aitag v1.0.0                    # Tag HEAD commit as v1.0.0"
@@ -107,7 +107,7 @@ init_config
 TAG_OPTS=()
 PROMPT_FILE=${GITAI_TAG_PROMPT:-$DEFAULT_PROMPT_FILE}
 MODEL=${GITAI_MODEL}
-LANGUAGE=${GITAI_LANGUAGE:-English}
+LANGUAGE=${GITAI_LANG:-English}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
