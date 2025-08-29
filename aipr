@@ -236,7 +236,7 @@ show_help() {
     echo "  GITAI_PR_PROMPT_TITLE       Override default PR title prompt file path"
     echo "  GITAI_PR_PROMPT_BODY        Override default PR body prompt file path"
     echo "  GITAI_MODEL                 Set default LLM model for PR generation"
-    echo "  GITAI_LANG                  The language for the generated commit message. Defaults to 'English'."
+    echo "  GITAI_LANG                  The language for the generated pull request message. Defaults to 'English'."
     echo ""
     echo "GH FLAGS"
     echo "  All flags provided by 'gh pr create/edit' can be pass to the aipr command."

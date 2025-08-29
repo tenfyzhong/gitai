@@ -79,7 +79,7 @@ show_help() {
     echo "ENVIRONMENT VARIABLES:"
     echo "  GITAI_TAG_PROMPT       Default prompt file path (default: $DEFAULT_PROMPT_FILE)"
     echo "  GITAI_MODEL            Set default LLM model for PR generation"
-    echo "  GITAI_LANG             The language for the generated commit message. Defaults to 'English'."
+    echo "  GITAI_LANG             The language for the generated tag message. Defaults to 'English'."
     echo
     echo "EXAMPLES:"
     echo "  aitag v1.0.0                    # Tag HEAD commit as v1.0.0"
