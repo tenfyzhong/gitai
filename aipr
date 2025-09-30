@@ -512,9 +512,8 @@ if ! is_git_repo; then
 fi
 
 repo_root=$(git rev-parse --show-toplevel)
-pwd=$(pwd)
-
-trap 'cd $pwd' EXIT
+original_dir="$PWD"
+trap 'cd "$original_dir"' EXIT
 
 cd "$repo_root" || exit 1
 
