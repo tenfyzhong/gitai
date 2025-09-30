@@ -511,6 +511,12 @@ if ! is_git_repo; then
     exit 1
 fi
 
+repo_root=$(git rev-parse --show-toplevel)
+original_dir="$PWD"
+trap 'cd "$original_dir"' EXIT
+
+cd "$repo_root" || exit 1
+
 if ! git ls-remote --exit-code "$BASE_REMOTE" &>/dev/null; then
     BASE_REMOTE=$(select_remote)
 fi
