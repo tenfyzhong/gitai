@@ -104,9 +104,9 @@ select_remote() {
         return 0
     fi
 
-    echo "Available remotes:"
+    echo "Available remotes:" >&2
     for i in "${!remotes[@]}"; do
-        printf "%d) %s\n" $((i + 1)) "${remotes[$i]}"
+        printf "%d) %s\n" $((i + 1)) "${remotes[$i]}" >&2
     done
 
     while true; do
