@@ -149,7 +149,7 @@ prompt_push() {
     case "$choice" in
         y | Y)
             echo "Pushing to $remote/$branch..."
-            if git push "$remote" "$branch"; then
+            if git push -u "$remote" "$branch"; then
                 echo -e "${GREEN}Successfully pushed to $remote/$branch${NC}"
                 return 0
             else
