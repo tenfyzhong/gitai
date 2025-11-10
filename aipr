@@ -367,6 +367,14 @@ EOF
 
     generate_body "$DIFF" "$TEMP_FILE" "$EXTRA_SYSTEM"
 
+    echo ""
+    echo -e "${BLUE}######################## Creating PR ##########################${NC}"
+    echo "$TITLE"
+    echo -e "${BLUE}---------------------------------------------------------------${NC}"
+    cat "$TEMP_FILE"
+    echo -e "${BLUE}###############################################################${NC}"
+    echo ""
+
     read -p "Create PR with these details? [y/N] " confirm
     if [[ $confirm =~ ^[Yy]$ ]]; then
         gh pr create -R "$BASE_REPO" -H "${HEAD_OWNER}:${HEAD_BRANCH}" -B "${BASE_BRANCH}" -t "$TITLE" -F "$TEMP_FILE" "$@"
@@ -380,10 +388,6 @@ update_pr() {
     shift
     echo -e "${YELLOW}Updating PR ${BLUE}${HEAD_OWNER}:${HEAD_BRANCH}${YELLOW} -> ${BLUE}${BASE_OWNER}:${BASE_BRANCH}${YELLOW}${NC}..."
 
-    if [ -f "$TEMPLATE" ]; then
-        TEMPLATE_CONTENT=$(cat "$TEMPLATE")
-    fi
-
     extra_options=()
     if [ "$UPDATE_TITLE" = 1 ]; then
         TEMP_FILE=$(create_temp_file "title.md")
@@ -393,21 +397,41 @@ update_pr() {
         extra_options+=(-t "$TITLE")
     fi
 
-    OLD_BODY=$(gh pr view "$ONGOING" --json body --jq '.body')
-    if [ -z "$OLD_BODY" ]; then
-        OLD_BODY="$TEMPLATE_CONTENT"
+    TEMP_FILE=$(create_temp_file "body.md")
+    EXTRA_SYSTEM=
+    if [ -f "$TEMPLATE" ]; then
+        TEMPLATE_CONTENT=$(cat "$TEMPLATE")
+        EXTRA_SYSTEM=$(
+            cat <<EOF
+You should fill in the content based on the following template:
+$TEMPLATE_CONTENT
+EOF
+        )
     fi
 
-    EXTRA_SYSTEM=$(
-        cat <<EOF
-There are some old content, you should update the old content, you should follow the old content format:
+    OLD_BODY=$(gh pr view "$ONGOING" --json body --jq '.body')
+    if [ -n "$OLD_BODY" ]; then
+        EXTRA_SYSTEM=$(
+            cat <<EOF
+$EXTRA_SYSTEM
+
+This is the old PR body, you should obtain the relative/reference/close PRs from the old body and fill in the template:
 $OLD_BODY
 EOF
-    )
+        )
+    fi
 
-    TEMP_FILE=$(create_temp_file "body.md")
-    printf '%s' "$OLD_BODY" >"$TEMP_FILE"
     generate_body "$DIFF" "$TEMP_FILE" "$EXTRA_SYSTEM"
+
+    echo ""
+    echo -e "${BLUE}######################## Updating PR ##########################${NC}"
+    if [ "$UPDATE_TITLE" = 1 ]; then
+        echo "$TITLE"
+        echo -e "${BLUE}---------------------------------------------------------------${NC}"
+    fi
+    cat "$TEMP_FILE"
+    echo -e "${BLUE}###############################################################${NC}"
+    echo ""
 
     read -p "Update PR #$ONGOING with these changes? [y/N] " confirm
     if [[ $confirm =~ ^[Yy]$ ]]; then
