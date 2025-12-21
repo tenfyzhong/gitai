@@ -349,11 +349,11 @@ create_pr() {
     shift
     echo -e "${YELLOW}Creating PR ${BLUE}${HEAD_OWNER}:${HEAD_BRANCH}${YELLOW} -> ${BLUE}${BASE_OWNER}:${BASE_BRANCH}${YELLOW}${NC}..."
 
-    TEMP_FILE=$(create_temp_file "title.md")
-    generate_title "$DIFF" "$TEMP_FILE"
-    TITLE=$(cat "$TEMP_FILE")
+    TITLE_FILE=$(create_temp_file "title.md")
+    generate_title "$DIFF" "$TITLE_FILE"
+    TITLE=$(cat "$TITLE_FILE")
 
-    TEMP_FILE=$(create_temp_file "body.md")
+    BODY_FILE=$(create_temp_file "body.md")
     EXTRA_SYSTEM=
     if [ -f "$TEMPLATE" ]; then
         TEMPLATE_CONTENT=$(cat "$TEMPLATE")
@@ -365,22 +365,38 @@ EOF
         )
     fi
 
-    generate_body "$DIFF" "$TEMP_FILE" "$EXTRA_SYSTEM"
+    generate_body "$DIFF" "$BODY_FILE" "$EXTRA_SYSTEM"
 
-    echo ""
-    echo -e "${BLUE}######################## Creating PR ##########################${NC}"
-    echo "$TITLE"
-    echo -e "${BLUE}---------------------------------------------------------------${NC}"
-    cat "$TEMP_FILE"
-    echo -e "${BLUE}###############################################################${NC}"
-    echo ""
+    # Loop for editing and confirmation
+    while true; do
+        echo ""
+        echo -e "${BLUE}######################## Creating PR ##########################${NC}"
+        echo "$TITLE"
+        echo -e "${BLUE}---------------------------------------------------------------${NC}"
+        cat "$BODY_FILE"
+        echo -e "${BLUE}###############################################################${NC}"
+        echo ""
 
-    read -p "Create PR with these details? [y/N] " confirm
-    if [[ $confirm =~ ^[Yy]$ ]]; then
-        gh pr create -R "$BASE_REPO" -H "${HEAD_OWNER}:${HEAD_BRANCH}" -B "${BASE_BRANCH}" -t "$TITLE" -F "$TEMP_FILE" "$@"
-    else
-        echo "PR creation cancelled"
-    fi
+        read -p "Create PR with these details? [y/N/e to edit] " confirm
+        case "$confirm" in
+            y | Y)
+                gh pr create -R "$BASE_REPO" -H "${HEAD_OWNER}:${HEAD_BRANCH}" -B "${BASE_BRANCH}" -t "$TITLE" -F "$BODY_FILE" "$@"
+                break
+                ;;
+            e | E)
+                # Edit title
+                ${EDITOR:-vi} "$TITLE_FILE"
+                TITLE=$(cat "$TITLE_FILE")
+
+                # Edit body
+                ${EDITOR:-vi} "$BODY_FILE"
+                ;;
+            *)
+                echo "PR creation cancelled"
+                break
+                ;;
+        esac
+    done
 }
 
 update_pr() {
@@ -389,15 +405,16 @@ update_pr() {
     echo -e "${YELLOW}Updating PR ${BLUE}${HEAD_OWNER}:${HEAD_BRANCH}${YELLOW} -> ${BLUE}${BASE_OWNER}:${BASE_BRANCH}${YELLOW}${NC}..."
 
     extra_options=()
+    TITLE_FILE=
     if [ "$UPDATE_TITLE" = 1 ]; then
-        TEMP_FILE=$(create_temp_file "title.md")
-        generate_title "$DIFF" "$TEMP_FILE"
-        TITLE=$(cat "$TEMP_FILE")
+        TITLE_FILE=$(create_temp_file "title.md")
+        generate_title "$DIFF" "$TITLE_FILE"
+        TITLE=$(cat "$TITLE_FILE")
 
         extra_options+=(-t "$TITLE")
     fi
 
-    TEMP_FILE=$(create_temp_file "body.md")
+    BODY_FILE=$(create_temp_file "body.md")
     EXTRA_SYSTEM=
     if [ -f "$TEMPLATE" ]; then
         TEMPLATE_CONTENT=$(cat "$TEMPLATE")
@@ -421,24 +438,43 @@ EOF
         )
     fi
 
-    generate_body "$DIFF" "$TEMP_FILE" "$EXTRA_SYSTEM"
+    generate_body "$DIFF" "$BODY_FILE" "$EXTRA_SYSTEM"
 
-    echo ""
-    echo -e "${BLUE}######################## Updating PR ##########################${NC}"
-    if [ "$UPDATE_TITLE" = 1 ]; then
-        echo "$TITLE"
-        echo -e "${BLUE}---------------------------------------------------------------${NC}"
-    fi
-    cat "$TEMP_FILE"
-    echo -e "${BLUE}###############################################################${NC}"
-    echo ""
+    # Loop for editing and confirmation
+    while true; do
+        echo ""
+        echo -e "${BLUE}######################## Updating PR ##########################${NC}"
+        if [ "$UPDATE_TITLE" = 1 ]; then
+            echo "$TITLE"
+            echo -e "${BLUE}---------------------------------------------------------------${NC}"
+        fi
+        cat "$BODY_FILE"
+        echo -e "${BLUE}###############################################################${NC}"
+        echo ""
 
-    read -p "Update PR #$ONGOING with these changes? [y/N] " confirm
-    if [[ $confirm =~ ^[Yy]$ ]]; then
-        gh pr edit "$ONGOING" -R "$BASE_REPO" -F "$TEMP_FILE" "${extra_options[@]}" "$@"
-    else
-        echo "PR update cancelled"
-    fi
+        read -p "Update PR #$ONGOING with these changes? [y/N/e to edit] " confirm
+        case "$confirm" in
+            y | Y)
+                gh pr edit "$ONGOING" -R "$BASE_REPO" -F "$BODY_FILE" "${extra_options[@]}" "$@"
+                break
+                ;;
+            e | E)
+                if [ "$UPDATE_TITLE" = 1 ]; then
+                    # Edit title
+                    ${EDITOR:-vi} "$TITLE_FILE"
+                    TITLE=$(cat "$TITLE_FILE")
+                    extra_options=(-t "$TITLE")
+                fi
+
+                # Edit body
+                ${EDITOR:-vi} "$BODY_FILE"
+                ;;
+            *)
+                echo "PR update cancelled"
+                break
+                ;;
+        esac
+    done
 }
 
 init_config
