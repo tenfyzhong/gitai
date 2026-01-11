@@ -1,67 +1,31 @@
 #!/usr/bin/env bash
 # Thanks Harper Reed https://harper.blog/2024/03/11/use-an-llm-to-automagically-generate-meaningful-git-commit-messages/
 
-# ANSI color codes for styling the output
-RED='\033[0;31m'    # Sets text to red
-GREEN='\033[0;32m'  # Sets text to green
-YELLOW='\033[0;33m' # Sets text to yellow
-BLUE='\033[0;34m'   # Sets text to blue
-NC='\033[0m'        # Resets the text color to default, no color
+# Source the shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GITAI_LIB_PATH="${GITAI_LIB_PATH:-$(brew --prefix 2>/dev/null)/share/gitai/lib/gitai-common.sh}"
+
+# Try Homebrew location first, then local lib directory
+if [ -f "$GITAI_LIB_PATH" ]; then
+    source "$GITAI_LIB_PATH"
+elif [ -f "$SCRIPT_DIR/lib/gitai-common.sh" ]; then
+    source "$SCRIPT_DIR/lib/gitai-common.sh"
+else
+    echo "Error: Cannot find gitai-common.sh library" >&2
+    echo "Tried: $GITAI_LIB_PATH" >&2
+    echo "Tried: $SCRIPT_DIR/lib/gitai-common.sh" >&2
+    exit 1
+fi
 
 DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/aitag-prompt.txt
 
+# Wrapper functions for backward compatibility
 check_required_commands() {
-    local missing=0
-    for cmd in git llm; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            echo "Error: $cmd is not installed"
-            missing=$((missing + 1))
-        fi
-    done
-    return $missing
-}
-
-cleanup() {
-    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
-    kill_spin
-    tput cnorm # Show the cursor
-    exit 1
-}
-
-# Function to display a spinning animation during the LLM processing
-spin_animation() {
-    local msg="$1"
-    # Only show animation if output is going to a terminal
-    if ! [ -t 1 ]; then
-        echo "$1..." # Just show the message without animation
-        return
-    fi
-
-    # Array of spinner characters for the animation
-    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    # Infinite loop to keep the animation running
-    while true; do
-        for i in "${spinner[@]}"; do
-            tput civis                                    # Hide the cursor to enhance the animation appearance
-            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
-            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
-            sleep 0.1                                     # Delay to control the speed of the animation
-            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
-        done
-    done
-}
-
-kill_spin() {
-    if [ -n "$SPIN_PID" ]; then
-        kill $SPIN_PID
-        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
-        SPIN_PID=
-        printf "\n"
-    fi
+    gitai_check_required_commands git llm
 }
 
 is_git_repo() {
-    git rev-parse --is-inside-work-tree >/dev/null 2>&1
+    gitai_is_git_repo
 }
 
 show_help() {
@@ -89,17 +53,7 @@ show_help() {
 }
 
 init_config() {
-    if [ ! -f "$DEFAULT_PROMPT_FILE" ]; then
-        brew_prompt=$(brew --prefix)/share/gitai/prompts/aitag-prompt.txt
-        if [ ! -f "$brew_prompt" ]; then
-            echo "Can't find a default configuration file. Please create one at $DEFAULT_PROMPT_FILE" >&2
-            exit 1
-        fi
-
-        dir=$(dirname "$DEFAULT_PROMPT_FILE")
-        mkdir -p "$dir"
-        cp "$brew_prompt" "$DEFAULT_PROMPT_FILE"
-    fi
+    gitai_init_config "$DEFAULT_PROMPT_FILE" "prompts/aitag-prompt.txt" || exit 1
 }
 
 init_config

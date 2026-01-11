@@ -1,80 +1,32 @@
 #!/usr/bin/env bash
 # Thanks Harper Reed https://harper.blog/2024/03/11/use-an-llm-to-automagically-generate-meaningful-git-commit-messages/
 
-# ANSI color codes for styling the output
-RED='\033[0;31m'    # Sets text to red
-GREEN='\033[0;32m'  # Sets text to green
-YELLOW='\033[0;33m' # Sets text to yellow
-BLUE='\033[0;34m'   # Sets text to blue
-NC='\033[0m'        # Resets the text color to default, no color
+# Source the shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GITAI_LIB_PATH="${GITAI_LIB_PATH:-$(brew --prefix 2>/dev/null)/share/gitai/lib/gitai-common.sh}"
+
+# Try Homebrew location first, then local lib directory
+if [ -f "$GITAI_LIB_PATH" ]; then
+    source "$GITAI_LIB_PATH"
+elif [ -f "$SCRIPT_DIR/lib/gitai-common.sh" ]; then
+    source "$SCRIPT_DIR/lib/gitai-common.sh"
+else
+    echo "Error: Cannot find gitai-common.sh library" >&2
+    echo "Tried: $GITAI_LIB_PATH" >&2
+    echo "Tried: $SCRIPT_DIR/lib/gitai-common.sh" >&2
+    exit 1
+fi
 
 DEFAULT_TITLE_PROMPT=$HOME/.config/gitai/prompts/aipr-title-prompt.txt
 DEFAULT_BODY_PROMPT=$HOME/.config/gitai/prompts/aipr-body-prompt.txt
 
-SPIN_PID=
-
-TEMP_FILES=()
-trap 'rm -f "${TEMP_FILES[@]}"' EXIT SIGINT TERM
-
-# Function to display a spinning animation during the LLM processing
-spin_animation() {
-    local msg="$1"
-    # Only show animation if output is going to a terminal
-    if ! [ -t 1 ]; then
-        echo "$1..." # Just show the message without animation
-        return
-    fi
-
-    # Array of spinner characters for the animation
-    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    # Infinite loop to keep the animation running
-    while true; do
-        for i in "${spinner[@]}"; do
-            tput civis                                    # Hide the cursor to enhance the animation appearance
-            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
-            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
-            sleep 0.1                                     # Delay to control the speed of the animation
-            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
-        done
-    done
-}
-
-kill_spin() {
-    if [ -n "$SPIN_PID" ]; then
-        kill $SPIN_PID
-        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
-        SPIN_PID=
-        printf "\n"
-    fi
-}
-
-# Function to handle interrupts
-cleanup() {
-    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
-    kill_spin
-    tput cnorm # Show the cursor
-    exit 1
-}
-
-# A helper to create a temp file and exit on failure
-create_temp_file() {
-    SUFFIX=${1:-gitai}
-    local temp_file
-    # Try for GNU mktemp with suffix support, but fall back to a portable version for systems like macOS.
-    temp_file=$(mktemp -q --suffix="$SUFFIX" 2>/dev/null || mktemp -q -t "$SUFFIX")
-    if [[ -z "$temp_file" || ! -f "$temp_file" ]]; then
-        echo "Error: Failed to create temporary file." >&2
-        exit 1
-    fi
-    TEMP_FILES+=("$temp_file")
-    echo "$temp_file"
-}
-
-# Function to get the current head branch
+# Function to get the current head branch (kept for backward compatibility)
+# Note: This is now available as gitai_get_current_branch() from the library
 get_current_branch() {
-    git rev-parse --abbrev-ref HEAD
+    gitai_get_current_branch
 }
 
+# Get the remote for a branch, with interactive selection if needed
 get_branch_remote() {
     local branch="$1"
     if [ -z "$branch" ]; then
@@ -164,12 +116,13 @@ prompt_push() {
     esac
 }
 
+# Wrapper functions for backward compatibility
 is_git_repo() {
-    git rev-parse --is-inside-work-tree >/dev/null 2>&1
+    gitai_is_git_repo
 }
 
 remote_2_url() {
-    git remote get-url "$1"
+    gitai_remote_to_url "$1"
 }
 
 find_template() {
@@ -243,40 +196,12 @@ show_help() {
 }
 
 init_config() {
-    if [ ! -f "$DEFAULT_TITLE_PROMPT" ]; then
-        brew_title_prompt=$(brew --prefix)/share/gitai/prompts/aipr-title-prompt.txt
-        if [ ! -f "$brew_title_prompt" ]; then
-            echo "Can't find a default configuration file. Please create one at $DEFAULT_TITLE_PROMPT" >&2
-            exit 1
-        fi
-
-        dir=$(dirname "$DEFAULT_TITLE_PROMPT")
-        mkdir -p "$dir"
-        cp "$brew_title_prompt" "$DEFAULT_TITLE_PROMPT"
-    fi
-
-    if [ ! -f "$DEFAULT_BODY_PROMPT" ]; then
-        brew_body_prompt=$(brew --prefix)/share/gitai/prompts/aipr-body-prompt.txt
-        if [ ! -f "$brew_body_prompt" ]; then
-            echo "Can't find a default configuration file. Please create one at $DEFAULT_BODY_PROMPT" >&2
-            exit 1
-        fi
-
-        dir=$(dirname "$DEFAULT_BODY_PROMPT")
-        mkdir -p "$dir"
-        cp "$brew_body_prompt" "$DEFAULT_BODY_PROMPT"
-    fi
+    gitai_init_config "$DEFAULT_TITLE_PROMPT" "prompts/aipr-title-prompt.txt" || exit 1
+    gitai_init_config "$DEFAULT_BODY_PROMPT" "prompts/aipr-body-prompt.txt" || exit 1
 }
 
 check_required_commands() {
-    local missing=0
-    for cmd in git gh jq llm; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            echo "Error: $cmd is not installed"
-            missing=$((missing + 1))
-        fi
-    done
-    return $missing
+    gitai_check_required_commands git gh jq llm
 }
 
 ongoing_pr() {

@@ -7,229 +7,225 @@ This file provides guidance to AI coding agents working in the `gitai` repositor
 `gitai` is a shell script-based CLI toolset that uses AI (via the `llm` command) to help with Git workflows: generating commit messages (`ai-commit-msg`), creating pull requests (`aipr`), and generating tags (`aitag`).
 
 **Language**: Bash shell scripts
-**Dependencies**: `git`, `llm`, `gh` (GitHub CLI), `jq`
+**Dependencies**: `git`, `llm`, `gh` (GitHub CLI), `jq`, `bats-core` (testing)
+
+## Architecture
+
+The project uses a **shared library pattern** to eliminate code duplication:
+- `lib/gitai-common.sh` (375 lines) - Shared library with common functions
+- `aipr` (581 lines) - PR creation/update tool
+- `aitag` (184 lines) - Tag generation tool
+- `ai-commit-msg` (139 lines) - Git commit message hook
+
+All scripts source the shared library for common functionality (colors, spinner, temp files, git utils, LLM integration).
 
 ## Build/Test/Lint Commands
 
 ### No Build System
-This project consists of executable bash scripts with no compilation or build step required.
+Executable bash scripts - no compilation required.
 
-### Testing Scripts
-There is no automated test framework. Test manually:
+### Testing with BATS
+The project uses [BATS (Bash Automated Testing System)](https://github.com/bats-core/bats-core) with **67 tests** (all passing).
 
 ```bash
-# Test help output
-./ai-commit-msg --help
-./aipr --help
-./aitag --help
+# Install BATS
+brew install bats-core
 
-# Test ai-commit-msg as git hook
-ln -s $(pwd)/ai-commit-msg ~/.git-hooks/prepare-commit-msg
-git config --global core.hooksPath ~/.git-hooks
-# Make changes and run: git commit
+# Run all tests (67 tests)
+bats tests/
 
-# Test aipr (requires git repo with changes)
-./aipr --help
-./aipr -B main -H feature-branch
+# Run specific test file
+bats tests/gitai-common.bats  # 41 library tests
+bats tests/aipr.bats          # 9 aipr tests
+bats tests/aitag.bats         # 9 aitag tests
+bats tests/ai-commit-msg.bats # 8 commit msg tests
 
-# Test aitag
-./aitag --help
-./aitag v1.0.0
+# Run single test by name
+bats tests/gitai-common.bats -f "gitai_create_temp_file"
+
+# Run with verbose output
+bats -t tests/
+
+# Run specific test by line number
+bats tests/gitai-common.bats:42
 ```
+
+**Test Structure**:
+- `tests/test_helper.bash` - Mock utilities (git, llm, gh, jq, brew)
+- All external commands are mocked - no real git operations or AI calls
+- Tests run in isolated temporary directories with automatic cleanup
 
 ### Linting
-No automated linting configured. Use `shellcheck` manually if available:
 ```bash
-shellcheck ai-commit-msg aipr aitag
+shellcheck ai-commit-msg aipr aitag lib/gitai-common.sh
 ```
-
-### Running Single Test
-N/A - no test framework exists. All testing is manual/integration testing.
 
 ## Code Style Guidelines
 
-### File Structure
-All scripts follow this pattern:
-1. Shebang (`#!/usr/bin/env bash`)
-2. ANSI color code definitions
-3. Default config paths
-4. Helper functions (spin_animation, cleanup, etc.)
-5. Main logic functions
-6. Argument parsing
-7. Main execution flow
+### Shared Library Pattern
+All scripts source `lib/gitai-common.sh` with Homebrew-aware loading:
 
-### Formatting
-- **Indentation**: 4 spaces (no tabs)
-- **Line length**: No strict limit, but keep readable (~120 chars preferred)
-- **Blank lines**: Use to separate logical sections
-
-### Naming Conventions
-- **Functions**: `snake_case` (e.g., `spin_animation`, `check_required_commands`, `is_git_repo`)
-- **Global variables**: `UPPERCASE` (e.g., `SPIN_PID`, `DEFAULT_PROMPT_FILE`, `TEMP_FILES`)
-- **Local variables**: `lowercase` (e.g., `local branch="$1"`, `local remote`)
-- **Constants**: `UPPERCASE` (e.g., `RED='\033[0;31m'`, `NC='\033[0m'`)
-
-### Variables and Types
-- Always quote variables: `"$variable"` not `$variable`
-- Use `local` for function-scoped variables
-- Declare arrays: `local -a array_name` or `ARRAY_NAME=()`
-- Use `${variable}` for clarity in complex expressions
-
-### Imports/Dependencies
-- Check required commands at script start:
-  ```bash
-  check_required_commands() {
-      for cmd in git llm; do
-          if ! command -v "$cmd" >/dev/null 2>&1; then
-              echo "Error: $cmd is not installed"
-          fi
-      done
-  }
-  ```
-- No formal import system (bash doesn't have one)
-- External dependencies: `git`, `llm`, `gh`, `jq`, `mktemp`, `tput`
-
-### Error Handling
-- **Exit codes**: Use `exit 1` for errors, `exit 0` for success
-- **Error messages**: Write to stderr with `>&2`
-- **Color errors**: Use `${RED}Error: message${NC}` format
-- **Validation**: Check inputs before use (git repo, file exists, valid commit, etc.)
-- **Cleanup**: Always use `trap cleanup SIGINT` for interrupt handling
-- **Early returns**: Exit early on validation failures
-
-Example:
 ```bash
-if ! is_git_repo; then
-    echo -e "${RED}Error: Not in a Git repository${NC}" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GITAI_LIB_PATH="${GITAI_LIB_PATH:-$(brew --prefix 2>/dev/null)/share/gitai/lib/gitai-common.sh}"
+
+if [ -f "$GITAI_LIB_PATH" ]; then
+    source "$GITAI_LIB_PATH"
+elif [ -f "$SCRIPT_DIR/lib/gitai-common.sh" ]; then
+    source "$SCRIPT_DIR/lib/gitai-common.sh"
+else
+    echo "Error: Cannot find gitai-common.sh library" >&2
     exit 1
 fi
 ```
 
-### Functions
-- Define functions before they're called
-- Use `local` for all function variables
-- Return 0 for success, 1 for failure
-- Document complex functions with comments
+### Naming Conventions
+- **Library functions**: `gitai_function_name()` (e.g., `gitai_spin_animation`, `gitai_create_temp_file`)
+- **Backward compat wrappers**: `function_name()` calls `gitai_function_name()`
+- **Global variables**: `UPPERCASE` (e.g., `GITAI_SPIN_PID`, `GITAI_TEMP_FILES`)
+- **Local variables**: `lowercase` with `local` keyword
+- **Constants**: `UPPERCASE` (e.g., `GITAI_RED='\033[0;31m'`)
 
-### Comments
-- Use `#` for single-line comments
-- Explain "why" not "what" for complex logic
-- Credit sources when adapting code (e.g., Harper Reed reference)
-- Document function purpose for non-obvious functions
+### Formatting
+- **Indentation**: 4 spaces (no tabs)
+- **Line length**: ~120 chars preferred
+- **Quoting**: Always quote variables: `"$variable"`
+- **Arrays**: Track with `ARRAY_NAME+=("$item")`
 
-### ANSI Colors
-Always define at top of script:
+### Error Handling
 ```bash
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'  # No Color
-```
-
-Use with `echo -e`: `echo -e "${GREEN}Success${NC}"`
-
-### Shared Patterns
-
-#### Spinner Animation
-All scripts use `spin_animation()` and `kill_spin()` for long-running LLM operations:
-```bash
-spin_animation "Generating message" &
-SPIN_PID=$!
-# ... do work ...
-kill_spin
-```
-
-#### Cleanup Handler
-```bash
-cleanup() {
-    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
-    kill_spin
-    tput cnorm  # Show cursor
+# Check git repo
+if ! gitai_is_git_repo; then
+    echo -e "${GITAI_RED}Error: Not in a Git repository${GITAI_NC}" >&2
     exit 1
-}
-trap cleanup SIGINT
+fi
+
+# Check required commands
+gitai_check_required_commands git llm gh jq || exit 1
+
+# Validate inputs early
+if [ -z "$TAG_NAME" ]; then
+    echo -e "${GITAI_RED}Error: Tag name required${GITAI_NC}" >&2
+    exit 1
+fi
 ```
 
-#### Config Initialization
+### Common Library Functions
+Use these from `lib/gitai-common.sh`:
+
 ```bash
-init_config() {
-    if [ ! -f "$DEFAULT_PROMPT_FILE" ]; then
-        brew_prompt=$(brew --prefix)/share/gitai/prompts/filename.txt
-        if [ ! -f "$brew_prompt" ]; then
-            echo "Error: Can't find default config" >&2
-            exit 1
-        fi
-        mkdir -p "$(dirname "$DEFAULT_PROMPT_FILE")"
-        cp "$brew_prompt" "$DEFAULT_PROMPT_FILE"
-    fi
-}
+# Colors (use GITAI_ prefix or backward compat aliases)
+echo -e "${GITAI_GREEN}Success${GITAI_NC}"
+
+# Temp files (auto-cleanup on EXIT/SIGINT/TERM)
+temp_file=$(gitai_create_temp_file ".txt")
+
+# Git utilities
+gitai_is_git_repo                    # Check if in git repo
+gitai_get_current_branch             # Get current branch name
+gitai_remote_to_url "origin"         # Get remote URL
+
+# Command checking
+gitai_check_required_commands git llm gh
+
+# Config initialization (Homebrew-aware)
+gitai_init_config "$config_file" "prompts/file.txt"
+
+# LLM integration
+gitai_setup_llm_model                # Setup LLM_MODEL env var
+gitai_call_llm "prompt" "input" "msg"
+gitai_generate_with_prompt_file "$file" "input" "English" "msg"
+
+# Spinner animation
+gitai_spin_animation "Loading..." &
+GITAI_SPIN_PID=$!
+# ... do work ...
+gitai_kill_spin
+
+# Cleanup handler
+trap gitai_cleanup SIGINT
 ```
 
-#### Temp File Management
+### Writing Tests
+Use BATS with test helpers:
+
 ```bash
-TEMP_FILES=()
-trap 'rm -f "${TEMP_FILES[@]}"' EXIT SIGINT TERM
+#!/usr/bin/env bats
+load test_helper
 
-create_temp_file() {
-    local temp_file
-    temp_file=$(mktemp -q -t "gitai")
-    TEMP_FILES+=("$temp_file")
-    echo "$temp_file"
+setup() {
+    setup_mock_environment  # Creates temp dir, mocks all commands
+    setup_git_repo          # Creates mock git repo
+}
+
+teardown() {
+    teardown_test_dir       # Cleans up
+}
+
+@test "description of test" {
+    run command_to_test
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "expected output" ]]
 }
 ```
+
+**Available mocks**: `mock_git`, `mock_llm`, `mock_gh`, `mock_jq`, `mock_brew`
 
 ## Environment Variables
 
-Scripts respect these environment variables:
-- `GITAI_MODEL`: Default LLM model
-- `GITAI_LANG`: Language for generated content (default: English)
-- `GITAI_SKIP_AI_COMMIT_MSG_HOOK`: Skip commit hook when set
-- `GITAI_COMMIT_MSG_PROMPT`: Custom commit message prompt path
-- `GITAI_PR_PROMPT_TITLE`: Custom PR title prompt path
-- `GITAI_PR_PROMPT_BODY`: Custom PR body prompt path
-- `GITAI_TAG_PROMPT`: Custom tag prompt path
-
-## Key Files
-
-- `ai-commit-msg`: Git prepare-commit-msg hook (173 lines)
-- `aipr`: PR creation/update tool (618 lines)
-- `aitag`: Tag generation tool (210 lines)
-- `prompts/`: Default prompt templates
-- `completions/`: Shell completion scripts (bash, zsh, fish)
-- `CLAUDE.md`: Additional context for Claude Code
+- `GITAI_MODEL` - Default LLM model
+- `GITAI_LANG` - Language for generated content (default: English)
+- `GITAI_SKIP_AI_COMMIT_MSG_HOOK` - Skip commit hook when set
+- `GITAI_COMMIT_MSG_PROMPT` - Custom commit message prompt path
+- `GITAI_PR_PROMPT_TITLE` - Custom PR title prompt path
+- `GITAI_PR_PROMPT_BODY` - Custom PR body prompt path
+- `GITAI_TAG_PROMPT` - Custom tag prompt path
+- `GITAI_LIB_PATH` - Override library path (for testing)
 
 ## Making Changes
 
-### Adding New Features
-1. Follow existing script patterns
-2. Add help text to `show_help()` function
-3. Update README.md with new options
-4. Test manually with various scenarios
-5. Consider adding shell completions
+### Adding Common Functionality
+1. Add to `lib/gitai-common.sh` with `gitai_` prefix
+2. Add backward compatibility wrapper if needed
+3. Export function: `export -f gitai_function_name`
+4. Write tests in `tests/gitai-common.bats`
+5. Update this file if it's a commonly used pattern
 
-### Modifying Existing Scripts
-1. Maintain backward compatibility
-2. Keep consistent with other scripts' patterns
-3. Test all code paths manually
-4. Update help text if changing options
+### Modifying Scripts
+1. **Maintain backward compatibility** - critical for Homebrew users
+2. Use library functions instead of duplicating code
+3. Write BATS tests for new functionality
+4. Update help text in `show_help()` function
+5. Test with: `bats tests/` and manual testing
 
-### Prompt Templates
-Located in `prompts/` directory. Follow existing format:
-- Clear instructions for LLM
-- Specify output format
-- Include "Think carefully" reminder
-- Keep concise but complete
+### Writing Tests
+1. Add tests to appropriate `tests/*.bats` file
+2. Use mocks from `test_helper.bash` - never call real git/llm/gh
+3. Test both success and failure cases
+4. Keep tests focused and independent
+5. Run `bats tests/` to verify all tests pass
 
 ## Common Pitfalls
 
+- **Library loading**: Always use the Homebrew-aware pattern above
 - **Quoting**: Always quote variables to handle spaces
-- **Exit codes**: Check command success with `if ! command; then`
-- **Portability**: Use `mktemp -q -t` for macOS compatibility
-- **Terminal detection**: Check `[ -t 1 ]` before using tput/animations
-- **Cleanup**: Always trap signals and clean up temp files
+- **Mocking**: In tests, mock ALL external commands (git, llm, gh, jq)
+- **Temp files**: Use `gitai_create_temp_file()` for auto-cleanup
+- **Exit codes**: Return 0 for success, 1 for failure
 - **Error output**: Use `>&2` for all error messages
+- **Portability**: Use `mktemp -q -t` for macOS compatibility
+- **Backward compat**: Keep old function names as wrappers
 
-## Reference: CLAUDE.md
+## Key Files
 
-See `CLAUDE.md` for additional context on architecture, implementation details, and testing approaches.
+- `lib/gitai-common.sh` - Shared library (375 lines)
+- `ai-commit-msg` - Git hook (139 lines)
+- `aipr` - PR tool (581 lines)
+- `aitag` - Tag tool (184 lines)
+- `tests/` - BATS test suite (67 tests, 1547 lines)
+- `prompts/` - LLM prompt templates
+- `completions/` - Shell completions (bash, zsh, fish)
+
+## Reference
+
+See `CLAUDE.md` for additional context and `REFACTORING_SUMMARY.md` for details on the shared library refactoring.
