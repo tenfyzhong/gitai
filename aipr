@@ -30,14 +30,14 @@ get_current_branch() {
 get_branch_remote() {
     local branch="$1"
     if [ -z "$branch" ]; then
-        exit 1
+        return 1
     fi
     local remote
     remote=$(git config --get "branch.$branch.remote")
     if [ -z "$remote" ]; then
         remote=$(select_remote)
         if [ -z "$remote" ]; then
-            exit 1
+            return 1
         fi
     fi
     echo "$remote"

@@ -165,12 +165,7 @@ EOF
 MSG=$(echo "$DIFF" | llm -s "$PROMPT")
 kill_spin
 
-TEMP=$(mktemp -q)
-if [[ -z "$TEMP" || ! -f "$TEMP" ]]; then
-    echo "Error: Failed to create temporary file." >&2
-    exit 1
-fi
-trap 'rm -f "${TEMP}"' EXIT SIGINT TERM
+TEMP=$(gitai_create_temp_file ".tag")
 echo "$MSG" >"$TEMP"
 ${EDITOR:-vi} "$TEMP"
 
@@ -180,5 +175,3 @@ if [[ $confirm =~ ^[Yy]$ ]]; then
 else
     echo "Tag creation cancelled"
 fi
-
-rm -f "$TEMP"

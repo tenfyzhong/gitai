@@ -123,11 +123,7 @@ kill_spin
 # echo
 
 # Write the generated commit message to the specified file (usually the commit message file in .git)
-TMP_FILE=$(mktemp)
-if [ -z "$TMP_FILE" ]; then
-    exit 1
-fi
-trap 'rm -f -- "$TMP_FILE"' EXIT
+TMP_FILE=$(gitai_create_temp_file ".commit-msg")
 
 if ! {
     echo "$commit_msg"
