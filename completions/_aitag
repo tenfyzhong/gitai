@@ -8,7 +8,7 @@ _aitag() {
         {-s,--sign}'[Create signed tag]' \
         {-u,--local-user=}'[Create tag with specific user]:user:->users' \
         '--prompt=[Use custom prompt file]:prompt file:_files' \
-        '--model=[Specify LLM model to use]:model:->models' \
+        '--model[pi model or model pattern to use]:model:->models' \
         '--lang[Generate content in specified language (default: English)]:language:'
 
     case "$state" in
@@ -17,7 +17,7 @@ _aitag() {
             _describe -t user 'user' user
             ;;
         models)
-            model=($(llm models | grep -v '^Default' | sed 's/^[^:]*: \([^(]*\)\( (.*)\)\?/\1/'))
+            model=($(pi --list-models | awk 'NR > 1 {print $1 "/" $2}'))
             _describe -t model 'model' model
             ;;
     esac

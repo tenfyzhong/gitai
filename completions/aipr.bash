@@ -38,7 +38,7 @@ _pr_completion() {
             return 0
             ;;
         --model)
-            opts=$(llm models | grep -v '^Default' | sed 's/^[^:]*: \([^(]*\)\( (.*)\)\?/\1/')
+            opts=$(pi --list-models | awk 'NR > 1 {print $1 "/" $2}')
             ;;
     esac
 
