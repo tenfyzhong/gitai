@@ -7,9 +7,7 @@ fi
 
 # ANSI color codes for styling the output
 RED='\033[0;31m'    # Sets text to red
-GREEN='\033[0;32m'  # Sets text to green
 YELLOW='\033[0;33m' # Sets text to yellow
-BLUE='\033[0;34m'   # Sets text to blue
 NC='\033[0m'        # Resets the text color to default, no color
 
 DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/ai-commit-msg-prompt.txt
@@ -19,7 +17,7 @@ show_help() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Automatically generates a commit message for staged changes using an LLM.
+Automatically generates a commit message for staged changes using pi.
 This script is typically used as a 'prepare-commit-msg' Git hook.
 
 Options:
@@ -27,13 +25,13 @@ Options:
 
 Environment Variables:
   GITAI_SKIP_AI_COMMIT_MSG_HOOK  If set to a non-empty value, the script will exit without generating a message.
-  GITAI_MODEL                    Specifies the LLM model to use (e.g., 'gpt-4o'). Defaults to the model set as default in the 'llm' tool.
+  GITAI_MODEL                    Specifies the pi model or model pattern to use (e.g., 'openai/gpt-4o'). Defaults to pi's configured model.
   GITAI_COMMIT_MSG_PROMPT        Path to a custom prompt file. Defaults to '$DEFAULT_PROMPT_FILE'.
   GITAI_LANG                     The language for the generated commit message. Defaults to 'English'.
 EOF
 }
 
-# Function to display a spinning animation during the LLM processing
+# Function to display a spinning animation during AI processing
 spin_animation() {
     local msg="$1"
     # Only show animation if output is going to a terminal
@@ -58,8 +56,8 @@ spin_animation() {
 
 kill_spin() {
     if [ -n "$SPIN_PID" ]; then
-        kill $SPIN_PID
-        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
+        kill "$SPIN_PID" 2>/dev/null || true
+        wait "$SPIN_PID" 2>/dev/null || true # Wait for the process to terminate and suppress error messages
         SPIN_PID=
         printf "\n"
     fi
@@ -102,18 +100,13 @@ if [ -n "$2" ]; then
     exit 0 # Exit script if it's a merge commit, no custom message needed
 fi
 
-# Check if the `llm` command is installed
-if ! command -v llm &>/dev/null; then
-    echo -e "${RED}Error: 'llm' command is not installed. Please install it and try again.${NC}"
+# Check if the `pi` command is installed
+if ! command -v pi &>/dev/null; then
+    echo -e "${RED}Error: 'pi' command is not installed. Please install it and try again.${NC}"
     exit 1
 fi
 
-# The LLM command will use the model by the environment `MODEL`
 MODEL=${GITAI_MODEL}
-if [ -z "$MODEL" ]; then
-    MODEL=$(llm models default)
-fi
-export LLM_MODEL="$MODEL"
 
 PROMPT_FILE=${GITAI_COMMIT_MSG_PROMPT:-$DEFAULT_PROMPT_FILE}
 LANGUAGE=${GITAI_LANG:-English}
@@ -137,12 +130,16 @@ if [ -z "$diff" ]; then
 fi
 
 # Start the spinning animation in the background
-spin_animation "Generating LLM commit message using $MODEL" &
+MODEL_DISPLAY=${MODEL:-pi default}
+spin_animation "Generating commit message using $MODEL_DISPLAY" &
 SPIN_PID=$!
 
-# Generate the commit message using `git diff` piped into `llm` command
-# The LLM command takes a system prompt from a file as input
-if ! commit_msg=$(echo "$diff" | llm -s "$PROMPT" 2>&1); then
+PI_ARGS=(--print --no-session --no-tools --no-context-files --system-prompt "$PROMPT")
+if [ -n "$MODEL" ]; then
+    PI_ARGS+=(--model "$MODEL")
+fi
+
+if ! commit_msg=$(printf '%s\n' "$diff" | pi "${PI_ARGS[@]}" 2>&1); then
     # Stop the spinning animation by killing its process
     kill_spin
 
@@ -150,7 +147,7 @@ if ! commit_msg=$(echo "$diff" | llm -s "$PROMPT" 2>&1); then
     tput cnorm  # Show the cursor again
     printf "\n" # Move the cursor to the next line
 
-    printf "${RED}Error: 'llm' command failed to generate the commit message:\n${commit_msg}${NC}\n\nManually set the commit message"
+    printf "${RED}Error: 'pi' command failed to generate the commit message:\n%s${NC}\n\nManually set the commit message" "$commit_msg"
     exit 1
 fi
 

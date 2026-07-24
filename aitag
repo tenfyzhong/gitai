@@ -3,16 +3,14 @@
 
 # ANSI color codes for styling the output
 RED='\033[0;31m'    # Sets text to red
-GREEN='\033[0;32m'  # Sets text to green
 YELLOW='\033[0;33m' # Sets text to yellow
-BLUE='\033[0;34m'   # Sets text to blue
 NC='\033[0m'        # Resets the text color to default, no color
 
 DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/aitag-prompt.txt
 
 check_required_commands() {
     local missing=0
-    for cmd in git llm; do
+    for cmd in git pi; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             echo "Error: $cmd is not installed"
             missing=$((missing + 1))
@@ -28,7 +26,7 @@ cleanup() {
     exit 1
 }
 
-# Function to display a spinning animation during the LLM processing
+# Function to display a spinning animation during AI processing
 spin_animation() {
     local msg="$1"
     # Only show animation if output is going to a terminal
@@ -53,8 +51,8 @@ spin_animation() {
 
 kill_spin() {
     if [ -n "$SPIN_PID" ]; then
-        kill $SPIN_PID
-        wait $SPIN_PID 2>/dev/null # Wait for the process to terminate and suppress error messages
+        kill "$SPIN_PID" 2>/dev/null || true
+        wait "$SPIN_PID" 2>/dev/null || true # Wait for the process to terminate and suppress error messages
         SPIN_PID=
         printf "\n"
     fi
@@ -72,20 +70,20 @@ show_help() {
     echo "  -s, --sign            Create a signed tag"
     echo "  -u, --local-user USER Create tag with specific user"
     echo "  --prompt FILE         Use custom prompt file"
-    echo "  --model MODEL         Specify LLM model to use"
+    echo "  --model <model>       pi model or model pattern to use"
     echo "  --lang <lang>         Generate content in specified language (default: English)"
     echo "  -h, --help            Show this help message"
     echo
     echo "ENVIRONMENT VARIABLES:"
     echo "  GITAI_TAG_PROMPT       Default prompt file path (default: $DEFAULT_PROMPT_FILE)"
-    echo "  GITAI_MODEL            Set default LLM model for PR generation"
+    echo "  GITAI_MODEL            Set the pi model or model pattern for tag generation"
     echo "  GITAI_LANG             The language for the generated tag message. Defaults to 'English'."
     echo
     echo "EXAMPLES:"
     echo "  aitag v1.0.0                    # Tag HEAD commit as v1.0.0"
     echo "  aitag -a v1.0.0 abc1234         # Create annotated tag for specific commit"
-    echo "  aitag --model gpt-4 v1.0.0      # Use gpt-4 model for message generation"
-    echo "  GITAI_MODEL=gpt-4 aitag v1.0.0  # Use gpt-4 via environment variable"
+    echo "  aitag --model openai/gpt-4o v1.0.0      # Use a specific pi model"
+    echo "  GITAI_MODEL=openai/gpt-4o aitag v1.0.0  # Set the model with an environment variable"
 }
 
 init_config() {
@@ -149,11 +147,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ -z "$MODEL" ]; then
-    MODEL=$(llm models default)
-fi
-export LLM_MODEL="$MODEL"
-
 trap cleanup SIGINT
 
 if ! check_required_commands; then
@@ -186,13 +179,15 @@ LAST_TAG=$(git tag --sort=-v:refname | head -n1)
 
 DIFF=
 if [ -z "$LAST_TAG" ]; then
-    # If there no tag, all file are used to generate the message
-    DIFF=$(git ls-files | xargs cat)
+    # Compare against an empty tree so the first tag includes file names and diff context.
+    EMPTY_TREE=$(git hash-object -t tree /dev/null)
+    DIFF=$(git diff "$EMPTY_TREE" "$COMMIT")
 else
     DIFF=$(git diff "$LAST_TAG"..."$COMMIT")
 fi
 
-spin_animation "Generating tag message using $MODEL" &
+MODEL_DISPLAY=${MODEL:-pi default}
+spin_animation "Generating tag message using $MODEL_DISPLAY" &
 SPIN_PID=$!
 
 if [ ! -f "$PROMPT_FILE" ]; then
@@ -208,8 +203,20 @@ $PROMPT_CONTENT
 EOF
 )
 
-MSG=$(echo "$DIFF" | llm -s "$PROMPT")
+PI_ARGS=(--print --no-session --no-tools --no-context-files --system-prompt "$PROMPT")
+if [ -n "$MODEL" ]; then
+    PI_ARGS+=(--model "$MODEL")
+fi
+if ! MSG=$(printf '%s\n' "$DIFF" | pi "${PI_ARGS[@]}"); then
+    kill_spin
+    echo -e "${RED}Error: 'pi' command failed to generate the tag message.${NC}" >&2
+    exit 1
+fi
 kill_spin
+if [[ -z "${MSG//[[:space:]]/}" ]]; then
+    echo -e "${RED}Error: pi returned an empty tag message.${NC}" >&2
+    exit 1
+fi
 
 TEMP=$(mktemp -q)
 if [[ -z "$TEMP" || ! -f "$TEMP" ]]; then
@@ -220,7 +227,7 @@ trap 'rm -f "${TEMP}"' EXIT SIGINT TERM
 echo "$MSG" >"$TEMP"
 ${EDITOR:-vi} "$TEMP"
 
-read -p "Create tag:$TAG_NAME with these details? [y/N] " confirm
+read -r -p "Create tag:$TAG_NAME with these details? [y/N] " confirm
 if [[ $confirm =~ ^[Yy]$ ]]; then
     git tag "${TAG_OPTS[@]}" -F "$TEMP" "$TAG_NAME" "$COMMIT"
 else

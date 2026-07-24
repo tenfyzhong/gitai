@@ -1,6 +1,10 @@
 # gitai
 
-`gitai` is a set of command-line tools that use AI to help you with your Git workflow. It can help you write commit messages, create pull requests, and generate tags.
+`gitai` is a set of command-line tools that use the pi coding agent in command-line mode to help with your Git workflow. It can help you write commit messages, create pull requests, and generate tags.
+
+## Requirements
+
+Install and configure `pi` with the provider and model you want to use. `gitai` invokes pi in non-interactive, ephemeral, tool-free mode, so generation cannot modify your working tree and does not leave behind a pi session.
 
 ## Installation
 
@@ -33,7 +37,7 @@ This method will apply the hook to all your local repositories.
 3. **Link the hook script:**
 
     ```bash
-    ln -s "$(which llm-commit-msg)" ~/.git-hooks/prepare-commit-msg
+    ln -s "$(which ai-commit-msg)" ~/.git-hooks/prepare-commit-msg
     ```
 
 #### Per-Project Setup
@@ -49,14 +53,14 @@ If you want to use the hook only for a specific project:
 2. **Link the hook script:**
 
     ```bash
-    ln -s "$(which llm-commit-msg)" ./prepare-commit-msg
+    ln -s "$(which ai-commit-msg)" ./prepare-commit-msg
     ```
 
 Now, whenever you run `git commit`, the hook will automatically generate a commit message for you.
 
 ### `aipr`
 
-`aipr` is a command-line tool that uses AI to generate a pull request for you. It will generate a title and body for your pull request based on the changes in your current branch.
+`aipr` is a command-line tool that uses AI to generate a pull request for you. It generates the title and body together in one pi interaction based on the changes in your current branch.
 
 #### Usage
 
@@ -72,7 +76,7 @@ aipr [options]
 * `-T, --template <file>`: Specify a PR template file to use.
 * `--prompt-title <file>`: Path to PR title prompt template (default: `$HOME/.config/gitai/prompts/aipr-title-prompt.txt`).
 * `--prompt-body <file>`: Path to PR body prompt template (default: `$HOME/.config/gitai/prompts/aipr-body-prompt.txt`).
-* `--model <name>`: LLM model to use for generating PR content.
+* `--model <model>`: pi model or model pattern to use, such as `openai/gpt-4o`.
 * `--update-title`: Update PR title when editing existing PR.
 * `--lang <lang>`: Generate content in specified language (default: `English`).
 * `-h, --help`: Show this help message.
@@ -95,7 +99,7 @@ aitag [OPTIONS] TAG_NAME [COMMIT]
 * `-s, --sign`: Create a signed tag.
 * `-u, --local-user USER`: Create tag with specific user.
 * `--prompt FILE`: Use custom prompt file (default: `$HOME/.config/gitai/prompts/aitag-prompt.txt`)..
-* `--model MODEL`: Specify LLM model to use.
+* `--model <model>`: pi model or model pattern to use, such as `openai/gpt-4o`.
 * `--lang <lang>`: Generate content in specified language (default: `English`).
 * `-h, --help`: Show this help message.
 
@@ -107,13 +111,31 @@ You can specify a custom prompt file using the `--prompt` flag for `aitag`, and 
 
 ## Environment Variables
 
-* `GITAI_MODEL`: Set the default LLM model to use.
+* `GITAI_MODEL`: Set the pi model or model pattern to use. When unset, pi's configured default is used.
 * `GITAI_LANG`: Set the default language for generation.
 * `GITAI_COMMIT_MSG_PROMPT`: Override the default commit message prompt file path.
 * `GITAI_PR_PROMPT_TITLE`: Override the default PR title prompt file path.
 * `GITAI_PR_PROMPT_BODY`: Override the default PR body prompt file path.
 * `GITAI_TAG_PROMPT`: Override the default tag prompt file path.
 * `GITAI_SKIP_AI_COMMIT_MSG_HOOK`: If set, the `ai-commit-msg` hook will be skipped.
+
+## Testing
+
+Run the shell integration suite with `tests/run.sh`. The tests use temporary Git repositories and a stubbed pi command, so they do not make AI requests.
+
+To manually test this checkout in place of a Homebrew installation, run:
+
+```bash
+scripts/brew-dev-link link
+```
+
+This runs `brew unlink gitai` and links `aipr`, `aitag`, and `ai-commit-msg` from the current checkout into Homebrew's `bin` directory. Restore the installed Homebrew version after testing with:
+
+```bash
+scripts/brew-dev-link restore
+```
+
+The restore command only removes symbolic links that point to the current checkout. It refuses to overwrite or remove unrelated paths.
 
 ## License
 

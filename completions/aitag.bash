@@ -24,7 +24,7 @@ _aitag() {
             return 0
             ;;
         --model)
-            opts=$(llm models | grep -v '^Default' | sed 's/^[^:]*: \([^(]*\)\( (.*)\)\?/\1/')
+            opts=$(pi --list-models | awk 'NR > 1 {print $1 "/" $2}')
             COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
             ;;
     esac
