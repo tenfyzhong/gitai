@@ -1,60 +1,28 @@
 #!/usr/bin/env bash
 # Thanks Harper Reed https://harper.blog/2024/03/11/use-an-llm-to-automagically-generate-meaningful-git-commit-messages/
 
-# ANSI color codes for styling the output
-RED='\033[0;31m'    # Sets text to red
-GREEN='\033[0;32m'  # Sets text to green
-YELLOW='\033[0;33m' # Sets text to yellow
-BLUE='\033[0;34m'   # Sets text to blue
-NC='\033[0m'        # Resets the text color to default, no color
+GITAI_SCRIPT_PATH=${BASH_SOURCE[0]}
+while [ -L "$GITAI_SCRIPT_PATH" ]; do
+    GITAI_SCRIPT_DIR=$(cd -- "$(dirname -- "$GITAI_SCRIPT_PATH")" && pwd)
+    GITAI_SCRIPT_PATH=$(readlink "$GITAI_SCRIPT_PATH")
+    case "$GITAI_SCRIPT_PATH" in
+        /*) ;;
+        *) GITAI_SCRIPT_PATH="$GITAI_SCRIPT_DIR/$GITAI_SCRIPT_PATH" ;;
+    esac
+done
+GITAI_SCRIPT_DIR=$(cd -- "$(dirname -- "$GITAI_SCRIPT_PATH")" && pwd)
+GITAI_COMMON_SCRIPT="$GITAI_SCRIPT_DIR/gitai-common.sh"
+if [ ! -r "$GITAI_COMMON_SCRIPT" ]; then
+    echo "Error: gitai-common.sh is not installed next to aipr." >&2
+    exit 1
+fi
+. "$GITAI_COMMON_SCRIPT"
 
 DEFAULT_TITLE_PROMPT=$HOME/.config/gitai/prompts/aipr-title-prompt.txt
 DEFAULT_BODY_PROMPT=$HOME/.config/gitai/prompts/aipr-body-prompt.txt
 
-SPIN_PID=
-
 TEMP_FILES=()
 trap 'rm -f "${TEMP_FILES[@]}"' EXIT SIGINT TERM
-
-# Function to display a spinning animation during AI processing
-spin_animation() {
-    local msg="$1"
-    # Only show animation if output is going to a terminal
-    if ! [ -t 1 ]; then
-        echo "$1..." # Just show the message without animation
-        return
-    fi
-
-    # Array of spinner characters for the animation
-    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    # Infinite loop to keep the animation running
-    while true; do
-        for i in "${spinner[@]}"; do
-            tput civis                                    # Hide the cursor to enhance the animation appearance
-            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
-            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
-            sleep 0.1                                     # Delay to control the speed of the animation
-            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
-        done
-    done
-}
-
-kill_spin() {
-    if [ -n "$SPIN_PID" ]; then
-        kill "$SPIN_PID" 2>/dev/null || true
-        wait "$SPIN_PID" 2>/dev/null || true # Wait for the process to terminate and suppress error messages
-        SPIN_PID=
-        printf "\n"
-    fi
-}
-
-# Function to handle interrupts
-cleanup() {
-    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
-    kill_spin
-    tput cnorm # Show the cursor
-    exit 1
-}
 
 # A helper to create a temp file and exit on failure
 create_temp_file() {
@@ -164,10 +132,6 @@ prompt_push() {
     esac
 }
 
-is_git_repo() {
-    git rev-parse --is-inside-work-tree >/dev/null 2>&1
-}
-
 remote_2_url() {
     git remote get-url "$1"
 }
@@ -227,7 +191,7 @@ show_help() {
     echo "  -T, --template <file>     Specify a PR template file to use"
     echo "  --prompt-title <file>     Path to PR title prompt template (default: $DEFAULT_TITLE_PROMPT)"
     echo "  --prompt-body <file>      Path to PR body prompt template (default: $DEFAULT_BODY_PROMPT)"
-    echo "  --model <model>           pi model or model pattern to use"
+    echo "  --model <model>           Model to use with the selected AI agent"
     echo "  --update-title            Update PR title when editing existing PR"
     echo "  --lang <lang>             Generate content in specified language (default: English)"
     echo "  -h, --help                Show this help message"
@@ -235,7 +199,8 @@ show_help() {
     echo "ENVIRONMENT VARIABLES:"
     echo "  GITAI_PR_PROMPT_TITLE       Override default PR title prompt file path"
     echo "  GITAI_PR_PROMPT_BODY        Override default PR body prompt file path"
-    echo "  GITAI_MODEL                 Set the pi model or model pattern for PR generation"
+    echo "  GITAI_AGENT                 AI agent: pi, oh-my-pi, codex, or claude-code (auto-detected when unset)"
+    echo "  GITAI_MODEL                 Set the model for PR generation"
     echo "  GITAI_LANG                  The language for the generated pull request message. Defaults to 'English'."
     echo ""
     echo "GH FLAGS"
@@ -266,17 +231,6 @@ init_config() {
         mkdir -p "$dir"
         cp "$brew_body_prompt" "$DEFAULT_BODY_PROMPT"
     fi
-}
-
-check_required_commands() {
-    local missing=0
-    for cmd in git gh jq pi; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            echo "Error: $cmd is not installed"
-            missing=$((missing + 1))
-        fi
-    done
-    return $missing
 }
 
 ongoing_pr() {
@@ -315,30 +269,34 @@ $output_format
 EOF
     )
 
-    local model_display=${MODEL:-pi default}
-    spin_animation "Generating PR content using $model_display" &
+    local model_display=${MODEL:-${GITAI_AGENT:-auto-selected agent default}}
+    gitai_spin_animation "Generating PR content using $model_display" &
+    # Read by gitai_kill_spin from the sourced common runtime.
+    # shellcheck disable=SC2034
     SPIN_PID=$!
 
-    local pi_args=(--print --no-session --no-tools --no-context-files --system-prompt "$prompt")
-    if [ -n "$MODEL" ]; then
-        pi_args+=(--model "$MODEL")
-    fi
-
-    local response
-    if ! response=$(printf '%s\n' "$diff" | pi "${pi_args[@]}"); then
-        kill_spin
-        echo -e "${RED}Error: 'pi' command failed to generate PR content.${NC}" >&2
+    local response normalized_response
+    if ! response=$(printf '%s\n' "$diff" | "$AGENT_RUNNER" "$prompt" "$MODEL"); then
+        gitai_kill_spin
+        echo -e "${RED}Error: AI agent failed to generate PR content.${NC}" >&2
         exit 1
     fi
-    kill_spin
+    gitai_kill_spin
+
+    if ! normalized_response=$(printf '%s\n' "$response" | gitai_extract_json_object); then
+        echo -e "${RED}Error: AI agent returned invalid PR content; expected a JSON object.${NC}" >&2
+        printf 'Raw agent response:\n%s\n' "$response" >&2
+        exit 1
+    fi
+    response=$normalized_response
 
     if ! printf '%s\n' "$response" | jq -e 'type == "object" and (.body | type == "string")' >/dev/null; then
-        echo -e "${RED}Error: pi returned invalid PR content; expected a JSON object with a body string.${NC}" >&2
+        echo -e "${RED}Error: AI agent returned invalid PR content; expected a JSON object with a body string.${NC}" >&2
         exit 1
     fi
     if [ "$include_title" = 1 ]; then
         if ! printf '%s\n' "$response" | jq -e '(.title | type == "string") and (.title | length > 0)' >/dev/null; then
-            echo -e "${RED}Error: pi returned invalid PR content; expected a non-empty title string.${NC}" >&2
+            echo -e "${RED}Error: AI agent returned invalid PR content; expected a non-empty title string.${NC}" >&2
             exit 1
         fi
         printf '%s\n' "$response" | jq -r '.title' >"$title_file"
@@ -483,6 +441,10 @@ EOF
 
 init_config
 
+if ! gitai_init_agent_runner "$GITAI_SCRIPT_DIR" aipr; then
+    exit 1
+fi
+
 BASE_REMOTE=origin
 BASE_BRANCH=
 HEAD_BRANCH=$(get_current_branch)
@@ -558,14 +520,17 @@ if [ ! -f "$PROMPT_BODY" ]; then
     exit 1
 fi
 
-trap cleanup SIGINT
+trap gitai_handle_interrupt SIGINT
 
-if ! check_required_commands; then
+if ! gitai_check_required_commands git gh jq; then
     echo "Please install missing commands before proceeding" >&2
     exit 1
 fi
+if ! gitai_check_agent_runner; then
+    exit 1
+fi
 
-if ! is_git_repo; then
+if ! gitai_is_git_repo; then
     echo "Not in a Git repository" >&2
     exit 1
 fi
@@ -582,14 +547,16 @@ fi
 
 HEAD_REMOTE=$(get_branch_remote "$HEAD_BRANCH")
 
-spin_animation "Fetching new commits" &
+gitai_spin_animation "Fetching new commits" &
+# Read by gitai_kill_spin from the sourced common runtime.
+# shellcheck disable=SC2034
 SPIN_PID=$!
 # fetch new commits
 git fetch "$BASE_REMOTE"
 if [ "$HEAD_REMOTE" != "$BASE_REMOTE" ]; then
     git fetch "$HEAD_REMOTE"
 fi
-kill_spin
+gitai_kill_spin
 
 HEAD_URL=$(remote_2_url "$HEAD_REMOTE")
 if ! HEAD_VIEW=$(gh repo view --json defaultBranchRef,name,owner "$HEAD_URL"); then

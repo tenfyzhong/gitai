@@ -1,66 +1,24 @@
 #!/usr/bin/env bash
 # Thanks Harper Reed https://harper.blog/2024/03/11/use-an-llm-to-automagically-generate-meaningful-git-commit-messages/
 
-# ANSI color codes for styling the output
-RED='\033[0;31m'    # Sets text to red
-YELLOW='\033[0;33m' # Sets text to yellow
-NC='\033[0m'        # Resets the text color to default, no color
+GITAI_SCRIPT_PATH=${BASH_SOURCE[0]}
+while [ -L "$GITAI_SCRIPT_PATH" ]; do
+    GITAI_SCRIPT_DIR=$(cd -- "$(dirname -- "$GITAI_SCRIPT_PATH")" && pwd)
+    GITAI_SCRIPT_PATH=$(readlink "$GITAI_SCRIPT_PATH")
+    case "$GITAI_SCRIPT_PATH" in
+        /*) ;;
+        *) GITAI_SCRIPT_PATH="$GITAI_SCRIPT_DIR/$GITAI_SCRIPT_PATH" ;;
+    esac
+done
+GITAI_SCRIPT_DIR=$(cd -- "$(dirname -- "$GITAI_SCRIPT_PATH")" && pwd)
+GITAI_COMMON_SCRIPT="$GITAI_SCRIPT_DIR/gitai-common.sh"
+if [ ! -r "$GITAI_COMMON_SCRIPT" ]; then
+    echo "Error: gitai-common.sh is not installed next to aitag." >&2
+    exit 1
+fi
+. "$GITAI_COMMON_SCRIPT"
 
 DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/aitag-prompt.txt
-
-check_required_commands() {
-    local missing=0
-    for cmd in git pi; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            echo "Error: $cmd is not installed"
-            missing=$((missing + 1))
-        fi
-    done
-    return $missing
-}
-
-cleanup() {
-    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
-    kill_spin
-    tput cnorm # Show the cursor
-    exit 1
-}
-
-# Function to display a spinning animation during AI processing
-spin_animation() {
-    local msg="$1"
-    # Only show animation if output is going to a terminal
-    if ! [ -t 1 ]; then
-        echo "$1..." # Just show the message without animation
-        return
-    fi
-
-    # Array of spinner characters for the animation
-    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    # Infinite loop to keep the animation running
-    while true; do
-        for i in "${spinner[@]}"; do
-            tput civis                                    # Hide the cursor to enhance the animation appearance
-            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
-            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
-            sleep 0.1                                     # Delay to control the speed of the animation
-            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
-        done
-    done
-}
-
-kill_spin() {
-    if [ -n "$SPIN_PID" ]; then
-        kill "$SPIN_PID" 2>/dev/null || true
-        wait "$SPIN_PID" 2>/dev/null || true # Wait for the process to terminate and suppress error messages
-        SPIN_PID=
-        printf "\n"
-    fi
-}
-
-is_git_repo() {
-    git rev-parse --is-inside-work-tree >/dev/null 2>&1
-}
 
 show_help() {
     echo "Usage: aitag [OPTIONS] TAG_NAME [COMMIT]"
@@ -70,19 +28,20 @@ show_help() {
     echo "  -s, --sign            Create a signed tag"
     echo "  -u, --local-user USER Create tag with specific user"
     echo "  --prompt FILE         Use custom prompt file"
-    echo "  --model <model>       pi model or model pattern to use"
+    echo "  --model <model>       Model to use with the selected AI agent"
     echo "  --lang <lang>         Generate content in specified language (default: English)"
     echo "  -h, --help            Show this help message"
     echo
     echo "ENVIRONMENT VARIABLES:"
     echo "  GITAI_TAG_PROMPT       Default prompt file path (default: $DEFAULT_PROMPT_FILE)"
-    echo "  GITAI_MODEL            Set the pi model or model pattern for tag generation"
+    echo "  GITAI_AGENT            AI agent: pi, oh-my-pi, codex, or claude-code (auto-detected when unset)"
+    echo "  GITAI_MODEL            Set the model for tag generation"
     echo "  GITAI_LANG             The language for the generated tag message. Defaults to 'English'."
     echo
     echo "EXAMPLES:"
     echo "  aitag v1.0.0                    # Tag HEAD commit as v1.0.0"
     echo "  aitag -a v1.0.0 abc1234         # Create annotated tag for specific commit"
-    echo "  aitag --model openai/gpt-4o v1.0.0      # Use a specific pi model"
+    echo "  aitag --model openai/gpt-4o v1.0.0      # Use a specific model"
     echo "  GITAI_MODEL=openai/gpt-4o aitag v1.0.0  # Set the model with an environment variable"
 }
 
@@ -101,6 +60,10 @@ init_config() {
 }
 
 init_config
+
+if ! gitai_init_agent_runner "$GITAI_SCRIPT_DIR" aitag; then
+    exit 1
+fi
 
 TAG_OPTS=()
 PROMPT_FILE=${GITAI_TAG_PROMPT:-$DEFAULT_PROMPT_FILE}
@@ -147,14 +110,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-trap cleanup SIGINT
+trap gitai_handle_interrupt SIGINT
 
-if ! check_required_commands; then
+if ! gitai_check_required_commands git; then
     echo "Please install missing commands before proceeding" >&2
     exit 1
 fi
+if ! gitai_check_agent_runner; then
+    exit 1
+fi
 
-if ! is_git_repo; then
+if ! gitai_is_git_repo; then
     echo "Not in a Git repository" >&2
     exit 1
 fi
@@ -186,8 +152,10 @@ else
     DIFF=$(git diff "$LAST_TAG"..."$COMMIT")
 fi
 
-MODEL_DISPLAY=${MODEL:-pi default}
-spin_animation "Generating tag message using $MODEL_DISPLAY" &
+MODEL_DISPLAY=${MODEL:-${GITAI_AGENT:-auto-selected agent default}}
+gitai_spin_animation "Generating tag message using $MODEL_DISPLAY" &
+# Read by gitai_kill_spin from the sourced common runtime.
+# shellcheck disable=SC2034
 SPIN_PID=$!
 
 if [ ! -f "$PROMPT_FILE" ]; then
@@ -203,18 +171,14 @@ $PROMPT_CONTENT
 EOF
 )
 
-PI_ARGS=(--print --no-session --no-tools --no-context-files --system-prompt "$PROMPT")
-if [ -n "$MODEL" ]; then
-    PI_ARGS+=(--model "$MODEL")
-fi
-if ! MSG=$(printf '%s\n' "$DIFF" | pi "${PI_ARGS[@]}"); then
-    kill_spin
-    echo -e "${RED}Error: 'pi' command failed to generate the tag message.${NC}" >&2
+if ! MSG=$(printf '%s\n' "$DIFF" | "$AGENT_RUNNER" "$PROMPT" "$MODEL"); then
+    gitai_kill_spin
+    echo -e "${RED}Error: AI agent failed to generate the tag message.${NC}" >&2
     exit 1
 fi
-kill_spin
+gitai_kill_spin
 if [[ -z "${MSG//[[:space:]]/}" ]]; then
-    echo -e "${RED}Error: pi returned an empty tag message.${NC}" >&2
+    echo -e "${RED}Error: AI agent returned an empty tag message.${NC}" >&2
     exit 1
 fi
 

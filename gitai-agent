@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+
+set -u
+
+TEMP_FILES=()
+
+cleanup() {
+    if [ "${#TEMP_FILES[@]}" -gt 0 ]; then
+        rm -f -- "${TEMP_FILES[@]}"
+    fi
+}
+
+trap cleanup EXIT
+
+usage() {
+    echo "Usage: gitai-agent --check | <system-prompt> [model]" >&2
+    exit 2
+}
+
+normalize_agent() {
+    case "$1" in
+        pi) echo pi ;;
+        oh-my-pi | omp) echo oh-my-pi ;;
+        codex) echo codex ;;
+        claude-code | claude) echo claude-code ;;
+        *)
+            echo "Error: Unsupported AI agent '$1'. Supported agents: pi, oh-my-pi, codex, claude-code." >&2
+            return 1
+            ;;
+    esac
+}
+
+agent_command() {
+    case "$1" in
+        pi) echo pi ;;
+        oh-my-pi) echo omp ;;
+        codex) echo codex ;;
+        claude-code) echo claude ;;
+    esac
+}
+
+select_agent() {
+    local agent command
+    if [ -n "${GITAI_AGENT:-}" ]; then
+        agent=$(normalize_agent "$GITAI_AGENT") || return 1
+        command=$(agent_command "$agent")
+        if ! command -v "$command" >/dev/null 2>&1; then
+            echo "Error: Configured AI agent '$GITAI_AGENT' requires the '$command' command, but it is not installed." >&2
+            return 1
+        fi
+        echo "$agent"
+        return 0
+    fi
+
+    for agent in pi oh-my-pi codex claude-code; do
+        command=$(agent_command "$agent")
+        if command -v "$command" >/dev/null 2>&1; then
+            echo "$agent"
+            return 0
+        fi
+    done
+
+    echo "Error: No supported AI agent found. Install pi, oh-my-pi (omp), Codex (codex), or Claude Code (claude), or set GITAI_AGENT." >&2
+    return 1
+}
+
+run_agent() {
+    local agent=$1
+    local prompt=$2
+    local model=$3
+    local input_file
+    local -a args
+
+    case "$agent" in
+        pi)
+            args=(--print --no-session --no-tools --no-context-files --system-prompt "$prompt")
+            [ -n "$model" ] && args+=(--model "$model")
+            pi "${args[@]}"
+            ;;
+        oh-my-pi)
+            args=(--print --no-session --no-tools --no-rules --no-skills --no-extensions --system-prompt "$prompt")
+            [ -n "$model" ] && args+=(--model "$model")
+            if ! input_file=$(mktemp "${TMPDIR:-/tmp}/gitai-agent.XXXXXX"); then
+                echo "Error: Failed to create a temporary input file for oh-my-pi." >&2
+                return 1
+            fi
+            TEMP_FILES+=("$input_file")
+            if ! cat >"$input_file"; then
+                echo "Error: Failed to prepare input for oh-my-pi." >&2
+                return 1
+            fi
+            omp "${args[@]}" "@$input_file"
+            ;;
+        codex)
+            args=(exec --ephemeral --sandbox read-only --color never)
+            [ -n "$model" ] && args+=(--model "$model")
+            codex "${args[@]}" "$prompt"
+            ;;
+        claude-code)
+            args=(--print --no-session-persistence --system-prompt "$prompt")
+            [ -n "$model" ] && args+=(--model "$model")
+            claude "${args[@]}" "Use the supplied input to complete the task." --tools ""
+            ;;
+    esac
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = --check ]; then
+    select_agent
+    exit $?
+fi
+
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
+
+PROMPT=$1
+MODEL=${2:-}
+AGENT=$(select_agent) || exit 1
+run_agent "$AGENT" "$PROMPT" "$MODEL"

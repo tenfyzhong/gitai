@@ -10,7 +10,7 @@ _aipr() {
         {-T,--template}'[Specify a PR template file to use]:template:_files' \
         '--prompt-title[Path to PR title prompt template]:file:_files' \
         '--prompt-body[Path to PR body prompt template]:file:_files' \
-        '--model[pi model or model pattern to use]:model:->models' \
+        '--model[model to use with the selected AI agent]:model:->models' \
         '--update-title[Update PR title when editing existing PR]::' \
         '--lang[Generate content in specified language (default: English)]:language:'
 
@@ -28,8 +28,10 @@ _aipr() {
             _describe -t branch 'branch' branch
             ;;
         models)
-            model=($(pi --list-models | awk 'NR > 1 {print $1 "/" $2}'))
-            _describe -t model 'model' model
+            if [[ -z "${GITAI_AGENT:-}" || "$GITAI_AGENT" = pi ]] && (( $+commands[pi] )); then
+                model=($(pi --list-models | awk 'NR > 1 {print $1 "/" $2}'))
+                _describe -t model 'model' model
+            fi
             ;;
     esac
 }

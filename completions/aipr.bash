@@ -38,7 +38,11 @@ _pr_completion() {
             return 0
             ;;
         --model)
-            opts=$(pi --list-models | awk 'NR > 1 {print $1 "/" $2}')
+            if [[ -z "${GITAI_AGENT:-}" || "$GITAI_AGENT" = pi ]] && command -v pi >/dev/null 2>&1; then
+                opts=$(pi --list-models | awk 'NR > 1 {print $1 "/" $2}')
+            else
+                opts=
+            fi
             ;;
     esac
 
