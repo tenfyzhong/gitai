@@ -5,10 +5,32 @@ if [ -n "$GITAI_SKIP_AI_COMMIT_MSG_HOOK" ]; then
     exit 0
 fi
 
-# ANSI color codes for styling the output
-RED='\033[0;31m'    # Sets text to red
-YELLOW='\033[0;33m' # Sets text to yellow
-NC='\033[0m'        # Resets the text color to default, no color
+GITAI_SCRIPT_PATH=${BASH_SOURCE[0]}
+while [ -L "$GITAI_SCRIPT_PATH" ]; do
+    GITAI_SCRIPT_DIR=$(cd -- "$(dirname -- "$GITAI_SCRIPT_PATH")" && pwd)
+    GITAI_SCRIPT_PATH=$(readlink "$GITAI_SCRIPT_PATH")
+    case "$GITAI_SCRIPT_PATH" in
+        /*) ;;
+        *) GITAI_SCRIPT_PATH="$GITAI_SCRIPT_DIR/$GITAI_SCRIPT_PATH" ;;
+    esac
+done
+GITAI_SCRIPT_DIR=$(cd -- "$(dirname -- "$GITAI_SCRIPT_PATH")" && pwd)
+GITAI_COMMON_SCRIPT="$GITAI_SCRIPT_DIR/gitai-common.sh"
+if [ ! -r "$GITAI_COMMON_SCRIPT" ]; then
+    echo "Error: gitai-common.sh is not installed next to ai-commit-msg." >&2
+    exit 1
+fi
+. "$GITAI_COMMON_SCRIPT"
+
+TEMP_FILES=()
+
+cleanup_temp_files() {
+    if [ "${#TEMP_FILES[@]}" -gt 0 ]; then
+        rm -f -- "${TEMP_FILES[@]}"
+    fi
+}
+
+trap cleanup_temp_files EXIT
 
 DEFAULT_PROMPT_FILE=$HOME/.config/gitai/prompts/ai-commit-msg-prompt.txt
 
@@ -17,7 +39,7 @@ show_help() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Automatically generates a commit message for staged changes using pi.
+Automatically generates a commit message for staged changes using an AI agent.
 This script is typically used as a 'prepare-commit-msg' Git hook.
 
 Options:
@@ -25,50 +47,11 @@ Options:
 
 Environment Variables:
   GITAI_SKIP_AI_COMMIT_MSG_HOOK  If set to a non-empty value, the script will exit without generating a message.
-  GITAI_MODEL                    Specifies the pi model or model pattern to use (e.g., 'openai/gpt-4o'). Defaults to pi's configured model.
+  GITAI_AGENT                    AI agent to use: pi, oh-my-pi, codex, or claude-code. Auto-detected when unset.
+  GITAI_MODEL                    Specifies the model to use. Defaults to the selected agent's configured model.
   GITAI_COMMIT_MSG_PROMPT        Path to a custom prompt file. Defaults to '$DEFAULT_PROMPT_FILE'.
   GITAI_LANG                     The language for the generated commit message. Defaults to 'English'.
 EOF
-}
-
-# Function to display a spinning animation during AI processing
-spin_animation() {
-    local msg="$1"
-    # Only show animation if output is going to a terminal
-    if ! [ -t 1 ]; then
-        echo "$1..." # Just show the message without animation
-        return
-    fi
-
-    # Array of spinner characters for the animation
-    local spinner=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    # Infinite loop to keep the animation running
-    while true; do
-        for i in "${spinner[@]}"; do
-            tput civis                                    # Hide the cursor to enhance the animation appearance
-            tput el1                                      # Clear the line from the cursor to the beginning to display the spinner
-            printf "\r${YELLOW}%s${NC} %s..." "$i" "$msg" # Print the spinner and message
-            sleep 0.1                                     # Delay to control the speed of the animation
-            tput cub $((${#msg} + 5))                     # Move the cursor back to reset the spinner position
-        done
-    done
-}
-
-kill_spin() {
-    if [ -n "$SPIN_PID" ]; then
-        kill "$SPIN_PID" 2>/dev/null || true
-        wait "$SPIN_PID" 2>/dev/null || true # Wait for the process to terminate and suppress error messages
-        SPIN_PID=
-        printf "\n"
-    fi
-}
-
-# Function to handle interrupts
-cleanup() {
-    echo -e "\n${RED}Script interrupted. Cleaning up...${NC}"
-    kill_spin
-    tput cnorm # Show the cursor
-    exit 1
 }
 
 init_config() {
@@ -87,7 +70,7 @@ init_config() {
 
 init_config
 
-trap cleanup SIGINT
+trap gitai_handle_interrupt SIGINT
 
 # Parse command-line arguments for help flag
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -100,9 +83,10 @@ if [ -n "$2" ]; then
     exit 0 # Exit script if it's a merge commit, no custom message needed
 fi
 
-# Check if the `pi` command is installed
-if ! command -v pi &>/dev/null; then
-    echo -e "${RED}Error: 'pi' command is not installed. Please install it and try again.${NC}"
+if ! gitai_init_agent_runner "$GITAI_SCRIPT_DIR" ai-commit-msg; then
+    exit 1
+fi
+if ! gitai_check_agent_runner; then
     exit 1
 fi
 
@@ -130,29 +114,48 @@ if [ -z "$diff" ]; then
 fi
 
 # Start the spinning animation in the background
-MODEL_DISPLAY=${MODEL:-pi default}
-spin_animation "Generating commit message using $MODEL_DISPLAY" &
+MODEL_DISPLAY=${MODEL:-${GITAI_AGENT:-auto-selected agent default}}
+AGENT_ERROR_FILE=$(mktemp)
+if [ -z "$AGENT_ERROR_FILE" ]; then
+    echo "Error: Failed to create a temporary agent error file." >&2
+    exit 1
+fi
+TEMP_FILES+=("$AGENT_ERROR_FILE")
+gitai_spin_animation "Generating commit message using $MODEL_DISPLAY" &
+# Read by gitai_kill_spin from the sourced common runtime.
+# shellcheck disable=SC2034
 SPIN_PID=$!
 
-PI_ARGS=(--print --no-session --no-tools --no-context-files --system-prompt "$PROMPT")
-if [ -n "$MODEL" ]; then
-    PI_ARGS+=(--model "$MODEL")
-fi
-
-if ! commit_msg=$(printf '%s\n' "$diff" | pi "${PI_ARGS[@]}" 2>&1); then
+if ! commit_msg=$(printf '%s\n' "$diff" | "$AGENT_RUNNER" "$PROMPT" "$MODEL" 2>"$AGENT_ERROR_FILE"); then
     # Stop the spinning animation by killing its process
-    kill_spin
+    gitai_kill_spin
 
     # Finalizing output
     tput cnorm  # Show the cursor again
     printf "\n" # Move the cursor to the next line
 
-    printf "${RED}Error: 'pi' command failed to generate the commit message:\n%s${NC}\n\nManually set the commit message" "$commit_msg"
+    agent_error=$(cat "$AGENT_ERROR_FILE")
+    agent_diagnostic=$commit_msg
+    if [ -n "$agent_error" ]; then
+        if [ -n "$agent_diagnostic" ]; then
+            agent_diagnostic="$agent_diagnostic
+$agent_error"
+        else
+            agent_diagnostic=$agent_error
+        fi
+    fi
+    if [ -z "$agent_diagnostic" ]; then
+        agent_diagnostic="Agent exited unsuccessfully without diagnostic output."
+    fi
+    printf "${RED}Error: AI agent failed to generate the commit message:\n%s${NC}\n\nManually set the commit message" "$agent_diagnostic"
     exit 1
 fi
 
 # Stop the spinning animation by killing its process
-kill_spin
+gitai_kill_spin
+if [ -s "$AGENT_ERROR_FILE" ]; then
+    cat "$AGENT_ERROR_FILE" >&2
+fi
 
 # Display the generated commit message with color-coded headings
 # echo -e "${BLUE}=== Generated Commit Message ===${NC}"
@@ -165,7 +168,7 @@ TMP_FILE=$(mktemp)
 if [ -z "$TMP_FILE" ]; then
     exit 1
 fi
-trap 'rm -f -- "$TMP_FILE"' EXIT
+TEMP_FILES+=("$TMP_FILE")
 
 if ! {
     echo "$commit_msg"

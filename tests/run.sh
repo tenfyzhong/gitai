@@ -20,8 +20,8 @@ assert_contains() {
 assert_call_count() {
     local expected=$1
     local actual
-    actual=$(find "$PI_CALLS" -type f -name 'args.*' | wc -l | tr -d ' ')
-    [ "$actual" = "$expected" ] || fail "Expected $expected pi call(s), got $actual"
+    actual=$(find "$AGENT_CALLS" -type f -name 'args.*' | wc -l | tr -d ' ')
+    [ "$actual" = "$expected" ] || fail "Expected $expected agent call(s), got $actual"
 }
 
 setup_home() {
@@ -34,7 +34,8 @@ setup_stubs() {
     local name=$1
     STUB_DIR="$TEST_ROOT/stubs-$name"
     PI_CALLS="$TEST_ROOT/pi-calls-$name"
-    export PI_CALLS
+    AGENT_CALLS=$PI_CALLS
+    export PI_CALLS AGENT_CALLS
     mkdir -p "$STUB_DIR" "$PI_CALLS"
 
     cat >"$STUB_DIR/pi" <<'EOF'
@@ -55,6 +56,36 @@ fi
 EOF
     chmod +x "$STUB_DIR/pi"
     export PATH="$STUB_DIR:$PATH"
+}
+
+stub_agent() {
+    local command=$1
+    local response=${2:-feat: use selected agent}
+    cat >"$STUB_DIR/$command" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+call=\$(find "\$AGENT_CALLS" -type f -name 'args.*' | wc -l | tr -d ' ')
+call=\$((call + 1))
+printf '%s\n' "\$@" >"\$AGENT_CALLS/args.\$call"
+cat >"\$AGENT_CALLS/stdin.\$call"
+if [ "\$(basename "\$0")" = omp ]; then
+    echo "Working..." >&2
+fi
+for arg in "\$@"; do
+    case "\$arg" in
+        @*)
+            attachment=\${arg#@}
+            [ -f "\$attachment" ] && cat "\$attachment" >"\$AGENT_CALLS/attachment.\$call"
+            ;;
+    esac
+done
+if [ "\${AGENT_FAIL_STDOUT:-}" = 1 ]; then
+    echo "agent failure written to stdout"
+    exit 1
+fi
+printf '%s\n' '$response'
+EOF
+    chmod +x "$STUB_DIR/$command"
 }
 
 init_repo() {
@@ -78,7 +109,7 @@ test_commit_message_uses_pi() {
 
     (
         cd "$repo"
-        EDITOR=true GITAI_MODEL=google/test-model "$PROJECT_ROOT/ai-commit-msg" message
+        EDITOR=true GITAI_AGENT=pi GITAI_MODEL=google/test-model "$PROJECT_ROOT/ai-commit-msg" message
     )
 
     assert_call_count 1
@@ -99,7 +130,7 @@ test_tag_uses_pi() {
 
     printf 'n\n' | (
         cd "$repo"
-        EDITOR=true GITAI_MODEL=google/test-model "$PROJECT_ROOT/aitag" v1.0.0
+        EDITOR=true GITAI_AGENT=pi GITAI_MODEL=google/test-model "$PROJECT_ROOT/aitag" v1.0.0
     )
 
     assert_call_count 1
@@ -119,12 +150,12 @@ test_tag_rejects_empty_pi_response() {
 
     if printf 'n\n' | (
         cd "$repo"
-        EDITOR=true PI_EMPTY_RESPONSE=1 "$PROJECT_ROOT/aitag" v1.0.0
+        EDITOR=true GITAI_AGENT=pi PI_EMPTY_RESPONSE=1 "$PROJECT_ROOT/aitag" v1.0.0
     ) >"$output" 2>&1; then
         fail "Expected aitag to reject an empty pi response"
     fi
 
-    assert_contains "$output" "pi returned an empty tag message"
+    assert_contains "$output" "AI agent returned an empty tag message"
     [ -z "$(git -C "$repo" tag --list)" ] || fail "An empty tag message must not create a tag"
     echo "ok - aitag rejects an empty pi response"
 }
@@ -165,7 +196,7 @@ EOF
 
     printf 'n\n' | (
         cd "$repo"
-        EDITOR=true GITAI_MODEL=google/test-model "$PROJECT_ROOT/aipr"
+        EDITOR=true GITAI_AGENT=pi GITAI_MODEL=google/test-model "$PROJECT_ROOT/aipr"
     ) >"$TEST_ROOT/aipr-output"
 
     assert_call_count 1
@@ -180,7 +211,7 @@ EOF
 
     printf 'n\n' | (
         cd "$repo"
-        EDITOR=true GH_ONGOING=42 GITAI_MODEL=google/test-model "$PROJECT_ROOT/aipr" --update-title
+        EDITOR=true GH_ONGOING=42 GITAI_AGENT=pi GITAI_MODEL=google/test-model "$PROJECT_ROOT/aipr" --update-title
     ) >"$TEST_ROOT/aipr-update-output"
 
     assert_call_count 2
@@ -189,6 +220,177 @@ EOF
     assert_contains "$TEST_ROOT/aipr-update-output" "Improve pi integration"
     assert_contains "$TEST_ROOT/aipr-update-output" "Use pi once"
     echo "ok - aipr updates title and body with one pi call"
+}
+
+test_configured_agents_use_their_cli_contract() {
+    local configured command expected
+    for configured in oh-my-pi codex claude-code; do
+        setup_home "agent-$configured"
+        setup_stubs "agent-$configured"
+        case "$configured" in
+            oh-my-pi)
+                command=omp
+                expected=--no-tools
+                ;;
+            codex)
+                command=codex
+                expected=--ephemeral
+                ;;
+            claude-code)
+                command=claude
+                expected=--no-session-persistence
+                ;;
+        esac
+        rm "$STUB_DIR/pi"
+        stub_agent "$command"
+        local repo="$TEST_ROOT/agent-$configured-repo"
+        init_repo "$repo"
+        echo changed >"$repo/file.txt"
+        git -C "$repo" add file.txt
+        : >"$repo/message"
+
+        (
+            cd "$repo"
+            EDITOR=true GITAI_AGENT="$configured" GITAI_MODEL=test-model \
+                "$PROJECT_ROOT/ai-commit-msg" message
+        )
+
+        assert_call_count 1
+        assert_contains "$AGENT_CALLS/args.1" "$expected"
+        assert_contains "$AGENT_CALLS/args.1" "test-model"
+        if [ "$configured" = oh-my-pi ]; then
+            [ -f "$AGENT_CALLS/attachment.1" ] || fail "Expected oh-my-pi input to be passed as an @file attachment"
+            assert_contains "$AGENT_CALLS/attachment.1" "+changed"
+            if grep -F "Working..." "$repo/message" >/dev/null; then
+                fail "Expected oh-my-pi progress output to stay out of the commit message"
+            fi
+        else
+            assert_contains "$AGENT_CALLS/stdin.1" "+changed"
+        fi
+        if [ "$configured" = claude-code ]; then
+            assert_contains "$AGENT_CALLS/args.1" "Use the supplied input to complete the task."
+            local prompt_line tools_line
+            prompt_line=$(grep -nFx "Use the supplied input to complete the task." "$AGENT_CALLS/args.1" | cut -d: -f1)
+            tools_line=$(grep -nFx -- "--tools" "$AGENT_CALLS/args.1" | cut -d: -f1)
+            [ "$prompt_line" -lt "$tools_line" ] || \
+                fail "Expected the Claude prompt before the variadic --tools option"
+        fi
+    done
+    echo "ok - configured agents use their CLI contracts"
+}
+
+test_agent_stdout_failure_is_reported() {
+    setup_home agent-stdout-failure
+    setup_stubs agent-stdout-failure
+    rm "$STUB_DIR/pi"
+    stub_agent claude
+    local repo="$TEST_ROOT/agent-stdout-failure-repo"
+    local output="$TEST_ROOT/agent-stdout-failure-output"
+    init_repo "$repo"
+    echo changed >"$repo/file.txt"
+    git -C "$repo" add file.txt
+    : >"$repo/message"
+
+    if (
+        cd "$repo"
+        EDITOR=true AGENT_FAIL_STDOUT=1 GITAI_AGENT=claude-code \
+            "$PROJECT_ROOT/ai-commit-msg" message
+    ) >"$output" 2>&1; then
+        fail "Expected an agent failure written to stdout to fail"
+    fi
+    assert_contains "$output" "agent failure written to stdout"
+    echo "ok - agent failures written to stdout are reported"
+}
+
+test_agent_auto_detection_order() {
+    setup_home agent-detection
+    setup_stubs agent-detection
+    stub_agent omp
+    stub_agent codex
+    stub_agent claude
+    local repo="$TEST_ROOT/agent-detection-repo"
+    init_repo "$repo"
+    echo changed >"$repo/file.txt"
+    git -C "$repo" add file.txt
+    : >"$repo/message"
+
+    (
+        cd "$repo"
+        PATH="$STUB_DIR:/usr/bin:/bin" EDITOR=true "$PROJECT_ROOT/ai-commit-msg" message
+    )
+    assert_contains "$AGENT_CALLS/args.1" "--no-context-files"
+
+    rm "$STUB_DIR/pi"
+    : >"$repo/message"
+    (
+        cd "$repo"
+        PATH="$STUB_DIR:/usr/bin:/bin" EDITOR=true "$PROJECT_ROOT/ai-commit-msg" message
+    )
+    assert_contains "$AGENT_CALLS/args.2" "--no-rules"
+
+    rm "$STUB_DIR/omp"
+    : >"$repo/message"
+    (
+        cd "$repo"
+        PATH="$STUB_DIR:/usr/bin:/bin" EDITOR=true "$PROJECT_ROOT/ai-commit-msg" message
+    )
+    assert_contains "$AGENT_CALLS/args.3" "--ephemeral"
+
+    rm "$STUB_DIR/codex"
+    : >"$repo/message"
+    (
+        cd "$repo"
+        PATH="$STUB_DIR:/usr/bin:/bin" EDITOR=true "$PROJECT_ROOT/ai-commit-msg" message
+    )
+    assert_contains "$AGENT_CALLS/args.4" "--no-session-persistence"
+    echo "ok - agent auto-detection follows pi, oh-my-pi, codex, claude-code order"
+}
+
+test_commit_hook_resolves_runner_through_symlink() {
+    setup_home symlink-hook
+    setup_stubs symlink-hook
+    local repo="$TEST_ROOT/symlink-hook-repo"
+    init_repo "$repo"
+    mkdir "$repo/hooks"
+    ln -s "$PROJECT_ROOT/ai-commit-msg" "$repo/hooks/prepare-commit-msg"
+    echo changed >"$repo/file.txt"
+    git -C "$repo" add file.txt
+    : >"$repo/message"
+
+    (
+        cd "$repo"
+        GITAI_AGENT=pi "$repo/hooks/prepare-commit-msg" message
+    )
+    assert_call_count 1
+    echo "ok - commit hook resolves the agent runner through a symlink"
+}
+
+test_no_available_agent_is_an_error() {
+    setup_home no-agent
+    local repo="$TEST_ROOT/no-agent-repo"
+    local output="$TEST_ROOT/no-agent-output"
+    init_repo "$repo"
+    echo changed >"$repo/file.txt"
+    git -C "$repo" add file.txt
+    : >"$repo/message"
+
+    if (
+        cd "$repo"
+        PATH=/usr/bin:/bin EDITOR=true "$PROJECT_ROOT/ai-commit-msg" message
+    ) >"$output" 2>&1; then
+        fail "Expected ai-commit-msg to fail when no supported agent is installed"
+    fi
+    assert_contains "$output" "No supported AI agent found"
+    echo "ok - missing agents produce a clear error"
+}
+
+test_configured_unavailable_agent_is_an_error() {
+    local output="$TEST_ROOT/unavailable-agent-output"
+    if PATH=/usr/bin:/bin GITAI_AGENT=codex "$PROJECT_ROOT/gitai-agent" --check >"$output" 2>&1; then
+        fail "Expected an unavailable configured agent to fail"
+    fi
+    assert_contains "$output" "Configured AI agent 'codex' requires the 'codex' command"
+    echo "ok - unavailable configured agent produces a clear error"
 }
 
 test_model_help_is_consistent() {
@@ -206,9 +408,9 @@ test_model_help_is_consistent() {
     ) >"$aitag_help"
 
     assert_contains "$aipr_help" "--model <model>"
-    assert_contains "$aipr_help" "pi model or model pattern to use"
+    assert_contains "$aipr_help" "Model to use with the selected AI agent"
     assert_contains "$aitag_help" "--model <model>"
-    assert_contains "$aitag_help" "pi model or model pattern to use"
+    assert_contains "$aitag_help" "Model to use with the selected AI agent"
     echo "ok - --model help is consistent"
 }
 
@@ -240,7 +442,7 @@ EOF
         "$PROJECT_ROOT/scripts/brew-dev-link" link
 
     assert_contains "$brew_log" "unlink gitai"
-    for command in aipr aitag ai-commit-msg; do
+    for command in aipr aitag ai-commit-msg gitai-agent gitai-common.sh; do
         [ -L "$brew_prefix/bin/$command" ] || fail "Expected a development link for $command"
         [ "$(readlink "$brew_prefix/bin/$command")" = "$PROJECT_ROOT/$command" ] || \
             fail "Development link for $command has the wrong target"
@@ -250,15 +452,164 @@ EOF
         "$PROJECT_ROOT/scripts/brew-dev-link" restore
 
     assert_contains "$brew_log" "link gitai"
-    for command in aipr aitag ai-commit-msg; do
+    for command in aipr aitag ai-commit-msg gitai-agent gitai-common.sh; do
         [ ! -e "$brew_prefix/bin/$command" ] || fail "Expected development link for $command to be removed"
     done
     echo "ok - brew development links can be restored"
+}
+
+test_github_integration_script_cli() {
+    local help_output="$TEST_ROOT/github-integration-help"
+    local error_output="$TEST_ROOT/github-integration-error"
+
+    "$PROJECT_ROOT/tests/integration-github.sh" --help >"$help_output"
+    assert_contains "$help_output" "--keep-repo"
+    assert_contains "$help_output" "pi, oh-my-pi, codex, and claude-code"
+    assert_contains "$help_output" "ai-commit-msg, aitag, and aipr"
+
+    if "$PROJECT_ROOT/tests/integration-github.sh" --unknown >"$error_output" 2>&1; then
+        fail "Expected the GitHub integration script to reject unknown flags"
+    fi
+    assert_contains "$error_output" "Unknown option: --unknown"
+    echo "ok - GitHub integration script exposes a safe CLI"
+}
+
+test_github_integration_requires_cleanup_permission() {
+    local stub_dir="$TEST_ROOT/github-integration-stubs"
+    local output="$TEST_ROOT/github-integration-auth-error"
+    local gh_log="$TEST_ROOT/github-integration-gh.log"
+    mkdir -p "$stub_dir"
+
+    for command in pi omp codex; do
+        cat >"$stub_dir/$command" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+        chmod +x "$stub_dir/$command"
+    done
+
+    cat >"$stub_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1 $2" = "auth status" ]; then
+    printf '%s\n' '{"loggedIn":true,"authMethod":"test"}'
+fi
+exit 0
+EOF
+    chmod +x "$stub_dir/claude"
+
+    cat >"$stub_dir/gh" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1 $2" = "auth status" ]; then
+    printf '%s\n' '{"hosts":{"github.com":[{"state":"success","active":true,"scopes":"repo, read:org"}]}}'
+    exit 0
+fi
+printf '%s\n' "$*" >>"$TEST_GH_LOG"
+exit 99
+EOF
+    chmod +x "$stub_dir/gh"
+
+    if PATH="$stub_dir:$PATH" TEST_GH_LOG="$gh_log" \
+        "$PROJECT_ROOT/tests/integration-github.sh" >"$output" 2>&1; then
+        fail "Expected GitHub integration to require repository cleanup permission"
+    fi
+    assert_contains "$output" "delete_repo"
+    [ ! -e "$gh_log" ] || fail "GitHub integration created resources before checking cleanup permission"
+    echo "ok - GitHub integration checks cleanup permission before creating resources"
+}
+
+test_github_integration_checks_claude_auth_before_creating_repo() {
+    local stub_dir="$TEST_ROOT/github-claude-auth-stubs"
+    local output="$TEST_ROOT/github-claude-auth-error"
+    local gh_log="$TEST_ROOT/github-claude-auth-gh.log"
+    mkdir -p "$stub_dir"
+
+    for command in pi omp codex; do
+        cat >"$stub_dir/$command" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+        chmod +x "$stub_dir/$command"
+    done
+
+    cat >"$stub_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1 $2" = "auth status" ]; then
+    printf '%s\n' '{"loggedIn":false,"authMethod":"none"}'
+    exit 1
+fi
+exit 0
+EOF
+    chmod +x "$stub_dir/claude"
+
+    cat >"$stub_dir/gh" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1 $2" = "auth status" ]; then
+    printf '%s\n' '{"hosts":{"github.com":[{"state":"success","active":true,"scopes":"repo"}]}}'
+    exit 0
+fi
+printf '%s\n' "$*" >>"$TEST_GH_LOG"
+exit 99
+EOF
+    chmod +x "$stub_dir/gh"
+
+    if PATH="$stub_dir:$PATH" TEST_GH_LOG="$gh_log" \
+        "$PROJECT_ROOT/tests/integration-github.sh" --keep-repo >"$output" 2>&1; then
+        fail "Expected GitHub integration to reject unauthenticated Claude Code"
+    fi
+    assert_contains "$output" "claude auth login"
+    [ ! -e "$gh_log" ] || fail "GitHub integration created resources before checking Claude authentication"
+    echo "ok - GitHub integration checks Claude authentication before creating resources"
+}
+
+test_entrypoints_load_shared_functions() {
+    local common="$PROJECT_ROOT/gitai-common.sh"
+    [ -f "$common" ] || fail "Expected shared functions in gitai-common.sh"
+
+    for entrypoint in ai-commit-msg aipr aitag; do
+        # The assertion intentionally searches for a literal shell variable reference.
+        # shellcheck disable=SC2016
+        assert_contains "$PROJECT_ROOT/$entrypoint" '. "$GITAI_COMMON_SCRIPT"'
+        if grep -E '^(spin_animation|kill_spin|cleanup|check_required_commands|is_git_repo)\(\)' \
+            "$PROJECT_ROOT/$entrypoint" >/dev/null; then
+            fail "Expected $entrypoint to use shared common functions"
+        fi
+    done
+    echo "ok - entrypoints load shared functions"
+}
+
+test_shared_json_response_extraction() {
+    # Loaded dynamically from the checkout under test.
+    # shellcheck disable=SC1091
+    . "$PROJECT_ROOT/gitai-common.sh"
+    local expected='{"title":"Expected title","body":"Expected body"}'
+    local actual
+
+    actual=$(printf 'Claude status output\n%s\nDone\n' "$expected" | gitai_extract_json_object)
+    [ "$(printf '%s\n' "$actual" | jq -c .)" = "$expected" ] || \
+        fail "Expected JSON extraction to ignore surrounding text"
+
+    # Backticks are literal Markdown fence characters.
+    # shellcheck disable=SC2016
+    actual=$(printf '```json\n%s\n```\n' "$expected" | gitai_extract_json_object)
+    [ "$(printf '%s\n' "$actual" | jq -c .)" = "$expected" ] || \
+        fail "Expected JSON extraction to remove a Markdown fence"
+    echo "ok - shared JSON extraction tolerates agent formatting"
 }
 
 test_commit_message_uses_pi
 test_tag_uses_pi
 test_tag_rejects_empty_pi_response
 test_pr_uses_pi_once_for_title_and_body
+test_configured_agents_use_their_cli_contract
+test_agent_stdout_failure_is_reported
+test_agent_auto_detection_order
+test_commit_hook_resolves_runner_through_symlink
+test_no_available_agent_is_an_error
+test_configured_unavailable_agent_is_an_error
 test_model_help_is_consistent
 test_brew_development_links_can_be_restored
+test_github_integration_script_cli
+test_github_integration_requires_cleanup_permission
+test_github_integration_checks_claude_auth_before_creating_repo
+test_entrypoints_load_shared_functions
+test_shared_json_response_extraction
