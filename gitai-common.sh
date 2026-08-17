@@ -98,3 +98,40 @@ gitai_extract_json_object() {
         )
     '
 }
+
+# Clean agent output before it is written to a commit or tag message.
+# Removes a Markdown code fence (``` or ```lang) that wraps the entire block,
+# then drops leading blank lines and leading whitespace. Unfenced output, or
+# output with an opening fence but no matching closing fence, passes through
+# unchanged (aside from the leading trim) so legitimate inline fences in prose
+# are never destroyed.
+gitai_strip_code_fence() {
+    awk '
+        function emit(lines, from, to,     i, started) {
+            for (i = from; i <= to; i++) {
+                # Skip leading blank lines; strip leading whitespace on the
+                # first content line.
+                if (!started && lines[i] !~ /[^[:space:]]/) continue
+                if (!started && lines[i] ~ /^[[:space:]]+/) sub(/^[[:space:]]+/, "", lines[i])
+                started = 1
+                print lines[i]
+            }
+        }
+        {
+            lines[NR] = $0
+        }
+        END {
+            first = 0
+            last = 0
+            for (i = 1; i <= NR; i++) if (lines[i] ~ /[^[:space:]]/) { first = i; break }
+            for (i = NR; i >= 1; i--) if (lines[i] ~ /[^[:space:]]/) { last = i; break }
+            if (first && last && first != last \
+                && lines[first] ~ /^[[:space:]]*```/ \
+                && lines[last] ~ /^[[:space:]]*```[[:space:]]*$/) {
+                emit(lines, first + 1, last - 1)
+            } else {
+                emit(lines, 1, NR)
+            }
+        }
+    '
+}

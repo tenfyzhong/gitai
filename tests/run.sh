@@ -596,6 +596,98 @@ test_shared_json_response_extraction() {
     echo "ok - shared JSON extraction tolerates agent formatting"
 }
 
+test_shared_code_fence_stripping() {
+    # Loaded dynamically from the checkout under test.
+    # shellcheck disable=SC1091
+    . "$PROJECT_ROOT/gitai-common.sh"
+    local actual
+
+    # A fence wrapping the whole response is removed, blank lines preserved.
+    actual=$(printf '```\nline one\n\nline two\n```\n' | gitai_strip_code_fence)
+    [ "$actual" = $'line one\n\nline two' ] || fail "Expected a full fence to be stripped"
+
+    # An inline fence inside prose is left untouched.
+    actual=$(printf 'line one\n```\nline two\n```\n' | gitai_strip_code_fence)
+    [ "$actual" = $'line one\n```\nline two\n```' ] || fail "Expected an inline fence to pass through"
+
+    # An opening fence with no closing fence is left untouched.
+    actual=$(printf '```\nunclosed\n' | gitai_strip_code_fence)
+    [ "$actual" = $'```\nunclosed' ] || fail "Expected an unclosed fence to pass through"
+
+    # An explicit language on the opening fence is stripped too.
+    actual=$(printf '```markdown\nheading\n```\n' | gitai_strip_code_fence)
+    [ "$actual" = "heading" ] || fail "Expected a fenced block with a language to be stripped"
+
+    # Leading blank lines and leading whitespace are trimmed.
+    actual=$(printf '\n\n  chore: commit subject\nbody\n' | gitai_strip_code_fence)
+    [ "$actual" = $'chore: commit subject\nbody' ] || \
+        fail "Expected leading blank lines and whitespace to be trimmed"
+
+    # Leading trim also applies inside a fence.
+    actual=$(printf '```\n\n  chore: commit subject\n```\n' | gitai_strip_code_fence)
+    [ "$actual" = "chore: commit subject" ] || \
+        fail "Expected leading trim inside a fenced block"
+    echo "ok - shared code fence stripping tolerates agent formatting"
+}
+
+test_commit_message_strips_code_fence() {
+    setup_home commit-fence
+    setup_stubs commit-fence
+    # Backticks are literal Markdown fence characters.
+    # shellcheck disable=SC2016
+    local fenced='```
+
+  chore(devtools): update Brewfile
+
+- Add grafana tap
+```'
+    stub_agent pi "$fenced"
+    local repo="$TEST_ROOT/commit-fence-repo"
+    init_repo "$repo"
+    echo changed >"$repo/file.txt"
+    git -C "$repo" add file.txt
+    : >"$repo/message"
+
+    (
+        cd "$repo"
+        EDITOR=true GITAI_AGENT=pi "$PROJECT_ROOT/ai-commit-msg" message
+    )
+
+    if grep -Fq '```' "$repo/message"; then
+        fail "Expected Markdown code fences to be stripped from the commit message"
+    fi
+    [ "$(head -n1 "$repo/message")" = "chore(devtools): update Brewfile" ] || \
+        fail "Expected leading blank lines and whitespace to be trimmed from the commit message"
+    echo "ok - ai-commit-msg strips a Markdown code fence and leading whitespace"
+}
+
+test_tag_strips_code_fence() {
+    setup_home tag-fence
+    setup_stubs tag-fence
+    # Backticks are literal Markdown fence characters.
+    # shellcheck disable=SC2016
+    local fenced='```
+Release v1.0.0
+
+- Add grafana tap
+```'
+    stub_agent pi "$fenced"
+    local repo="$TEST_ROOT/tag-fence-repo"
+    init_repo "$repo"
+
+    printf 'y\n' | (
+        cd "$repo"
+        EDITOR=true GITAI_AGENT=pi "$PROJECT_ROOT/aitag" v1.0.0
+    )
+
+    if git -C "$repo" tag -n99 v1.0.0 | grep -Fq '```'; then
+        fail "Expected Markdown code fences to be stripped from the tag message"
+    fi
+    git -C "$repo" tag -n99 v1.0.0 | grep -Fq "Release v1.0.0" || \
+        fail "Tag message body was not preserved"
+    echo "ok - aitag strips a Markdown code fence"
+}
+
 test_commit_message_uses_pi
 test_tag_uses_pi
 test_tag_rejects_empty_pi_response
@@ -613,3 +705,6 @@ test_github_integration_requires_cleanup_permission
 test_github_integration_checks_claude_auth_before_creating_repo
 test_entrypoints_load_shared_functions
 test_shared_json_response_extraction
+test_shared_code_fence_stripping
+test_commit_message_strips_code_fence
+test_tag_strips_code_fence
