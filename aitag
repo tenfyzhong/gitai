@@ -171,12 +171,17 @@ $PROMPT_CONTENT
 EOF
 )
 
-if ! MSG=$(printf '%s\n' "$DIFF" | "$AGENT_RUNNER" "$PROMPT" "$MODEL"); then
+# Capture raw output first to preserve the agent's exit status.
+raw_msg=""
+if ! raw_msg=$(printf '%s\n' "$DIFF" | "$AGENT_RUNNER" "$PROMPT" "$MODEL"); then
     gitai_kill_spin
     echo -e "${RED}Error: AI agent failed to generate the tag message.${NC}" >&2
     exit 1
 fi
 gitai_kill_spin
+
+# Strip markdown code fences that models sometimes wrap their output in.
+MSG=$(printf '%s\n' "$raw_msg" | gitai_strip_code_fences)
 if [[ -z "${MSG//[[:space:]]/}" ]]; then
     echo -e "${RED}Error: AI agent returned an empty tag message.${NC}" >&2
     exit 1

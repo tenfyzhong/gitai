@@ -595,6 +595,34 @@ test_shared_json_response_extraction() {
         fail "Expected JSON extraction to remove a Markdown fence"
     echo "ok - shared JSON extraction tolerates agent formatting"
 }
+test_strip_code_fences() {
+    # Loaded dynamically from the checkout under test.
+    # shellcheck disable=SC1091
+    . "$PROJECT_ROOT/gitai-common.sh"
+    local expected='chore: update Brewfile'
+    local actual
+
+    actual=$(printf '```
+%s
+```
+' "$expected" | gitai_strip_code_fences)
+    [ "$actual" = "$expected" ] || \
+        fail "Expected code fence stripping to remove plain fences"
+
+    actual=$(printf '```bash
+%s
+```
+' "$expected" | gitai_strip_code_fences)
+    [ "$actual" = "$expected" ] || \
+        fail "Expected code fence stripping to remove fenced language hint"
+
+    actual=$(printf 'plain text
+' | gitai_strip_code_fences)
+    [ "$actual" = "plain text" ] || \
+        fail "Expected plain text to pass through unchanged"
+
+    echo "ok - code fence stripping works correctly"
+}
 
 test_commit_message_uses_pi
 test_tag_uses_pi
@@ -613,3 +641,4 @@ test_github_integration_requires_cleanup_permission
 test_github_integration_checks_claude_auth_before_creating_repo
 test_entrypoints_load_shared_functions
 test_shared_json_response_extraction
+test_strip_code_fences

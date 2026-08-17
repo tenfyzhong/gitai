@@ -126,8 +126,9 @@ gitai_spin_animation "Generating commit message using $MODEL_DISPLAY" &
 # shellcheck disable=SC2034
 SPIN_PID=$!
 
-if ! commit_msg=$(printf '%s\n' "$diff" | "$AGENT_RUNNER" "$PROMPT" "$MODEL" 2>"$AGENT_ERROR_FILE"); then
-    # Stop the spinning animation by killing its process
+# Capture raw output first to preserve the agent's exit status.
+raw_msg=""
+if ! raw_msg=$(printf '%s\n' "$diff" | "$AGENT_RUNNER" "$PROMPT" "$MODEL" 2>"$AGENT_ERROR_FILE"); then
     gitai_kill_spin
 
     # Finalizing output
@@ -135,7 +136,7 @@ if ! commit_msg=$(printf '%s\n' "$diff" | "$AGENT_RUNNER" "$PROMPT" "$MODEL" 2>"
     printf "\n" # Move the cursor to the next line
 
     agent_error=$(cat "$AGENT_ERROR_FILE")
-    agent_diagnostic=$commit_msg
+    agent_diagnostic=$raw_msg
     if [ -n "$agent_error" ]; then
         if [ -n "$agent_diagnostic" ]; then
             agent_diagnostic="$agent_diagnostic
@@ -157,11 +158,12 @@ if [ -s "$AGENT_ERROR_FILE" ]; then
     cat "$AGENT_ERROR_FILE" >&2
 fi
 
-# Display the generated commit message with color-coded headings
-# echo -e "${BLUE}=== Generated Commit Message ===${NC}"
-# echo -e "${GREEN}$commit_msg${NC}"
-# echo -e "${BLUE}=================================${NC}"
-# echo
+# Strip markdown code fences that models sometimes wrap their output in.
+commit_msg=$(printf '%s\n' "$raw_msg" | gitai_strip_code_fences)
+if [[ -z "${commit_msg//[[:space:]]/}" ]]; then
+    printf "${RED}Error: AI agent returned an empty commit message.${NC}\n\nManually set the commit message" >&2
+    exit 1
+fi
 
 # Write the generated commit message to the specified file (usually the commit message file in .git)
 TMP_FILE=$(mktemp)
@@ -170,7 +172,7 @@ if [ -z "$TMP_FILE" ]; then
 fi
 TEMP_FILES+=("$TMP_FILE")
 
-if ! {
+if ! {\
     echo "$commit_msg"
     cat -- "$1"
 } >"$TMP_FILE"; then

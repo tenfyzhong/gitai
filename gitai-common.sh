@@ -98,3 +98,9 @@ gitai_extract_json_object() {
         )
     '
 }
+
+gitai_strip_code_fences() {
+    awk 'BEGIN { in_fence=0 }
+         /^[[:space:]]*```[a-zA-Z]*[[:space:]]*$/ { in_fence=!in_fence; next }
+         !in_fence { print }'
+}
