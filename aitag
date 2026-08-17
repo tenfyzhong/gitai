@@ -177,6 +177,8 @@ if ! MSG=$(printf '%s\n' "$DIFF" | "$AGENT_RUNNER" "$PROMPT" "$MODEL"); then
     exit 1
 fi
 gitai_kill_spin
+# Drop a Markdown code fence that wrapped the whole model response.
+MSG=$(printf '%s\n' "$MSG" | gitai_strip_code_fence)
 if [[ -z "${MSG//[[:space:]]/}" ]]; then
     echo -e "${RED}Error: AI agent returned an empty tag message.${NC}" >&2
     exit 1

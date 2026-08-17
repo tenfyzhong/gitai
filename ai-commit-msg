@@ -163,6 +163,9 @@ fi
 # echo -e "${BLUE}=================================${NC}"
 # echo
 
+# Drop a Markdown code fence that wrapped the whole model response.
+commit_msg=$(printf '%s\n' "$commit_msg" | gitai_strip_code_fence)
+
 # Write the generated commit message to the specified file (usually the commit message file in .git)
 TMP_FILE=$(mktemp)
 if [ -z "$TMP_FILE" ]; then
