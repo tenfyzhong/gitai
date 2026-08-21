@@ -27,6 +27,7 @@ show_help() {
     echo "  -a, --annotate        Create an annotated tag"
     echo "  -s, --sign            Create a signed tag"
     echo "  -u, --local-user USER Create tag with specific user"
+    echo "  -f, --force           Allow tag creation outside the main or master branch"
     echo "  --prompt FILE         Use custom prompt file"
     echo "  --model <model>       Model to use with the selected AI agent"
     echo "  --lang <lang>         Generate content in specified language (default: English)"
@@ -59,16 +60,11 @@ init_config() {
     fi
 }
 
-init_config
-
-if ! gitai_init_agent_runner "$GITAI_SCRIPT_DIR" aitag; then
-    exit 1
-fi
-
 TAG_OPTS=()
 PROMPT_FILE=${GITAI_TAG_PROMPT:-$DEFAULT_PROMPT_FILE}
 MODEL=${GITAI_MODEL}
 LANGUAGE=${GITAI_LANG:-English}
+FORCE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -87,6 +83,10 @@ while [[ $# -gt 0 ]]; do
         -u | --local-user)
             TAG_OPTS+=("-u" "$2")
             shift 2
+            ;;
+        -f | --force)
+            FORCE=true
+            shift
             ;;
         --prompt)
             PROMPT_FILE="$2"
@@ -116,12 +116,23 @@ if ! gitai_check_required_commands git; then
     echo "Please install missing commands before proceeding" >&2
     exit 1
 fi
-if ! gitai_check_agent_runner; then
+if ! gitai_is_git_repo; then
+    echo "Not in a Git repository" >&2
     exit 1
 fi
 
-if ! gitai_is_git_repo; then
-    echo "Not in a Git repository" >&2
+CURRENT_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+if [ "$FORCE" = false ] && [ "$CURRENT_BRANCH" != main ] && [ "$CURRENT_BRANCH" != master ]; then
+    echo -e "${RED}Error: Tag creation is only allowed on the main or master branch. Use --force to override.${NC}" >&2
+    exit 1
+fi
+
+init_config
+
+if ! gitai_init_agent_runner "$GITAI_SCRIPT_DIR" aitag; then
+    exit 1
+fi
+if ! gitai_check_agent_runner; then
     exit 1
 fi
 

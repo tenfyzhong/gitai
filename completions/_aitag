@@ -7,6 +7,7 @@ _aitag() {
         {-a,--annotate}'[Create annotated tag]' \
         {-s,--sign}'[Create signed tag]' \
         {-u,--local-user=}'[Create tag with specific user]:user:->users' \
+        {-f,--force}'[Allow tag creation outside the main or master branch]' \
         '--prompt=[Use custom prompt file]:prompt file:_files' \
         '--model[model to use with the selected AI agent]:model:->models' \
         '--lang[Generate content in specified language (default: English)]:language:'

@@ -160,6 +160,63 @@ test_tag_rejects_empty_pi_response() {
     echo "ok - aitag rejects an empty pi response"
 }
 
+test_tag_rejects_non_primary_branch_without_force() {
+    setup_home tag-branch-guard
+    setup_stubs tag-branch-guard
+    local repo="$TEST_ROOT/tag-branch-guard-repo"
+    local output="$TEST_ROOT/tag-branch-guard-output"
+    init_repo "$repo"
+    git -C "$repo" switch -q -c feature/release
+
+    if (
+        cd "$repo"
+        EDITOR=true GITAI_AGENT=pi "$PROJECT_ROOT/aitag" v1.0.0
+    ) >"$output" 2>&1; then
+        fail "Expected aitag to reject tag creation on a non-primary branch"
+    fi
+
+    assert_contains "$output" "Tag creation is only allowed on the main or master branch"
+    assert_call_count 0
+    [ -z "$(git -C "$repo" tag --list)" ] || fail "A rejected tag must not be created"
+    echo "ok - aitag rejects non-primary branches without force"
+}
+
+test_tag_force_allows_non_primary_branch() {
+    setup_home tag-force
+    setup_stubs tag-force
+    local repo="$TEST_ROOT/tag-force-repo"
+    init_repo "$repo"
+    git -C "$repo" switch -q -c feature/release
+
+    printf 'y\n' | (
+        cd "$repo"
+        EDITOR=true GITAI_AGENT=pi "$PROJECT_ROOT/aitag" -f v1.0.0
+    )
+
+    assert_call_count 1
+    git -C "$repo" rev-parse -q --verify refs/tags/v1.0.0 >/dev/null || \
+        fail "Expected --force to create a tag on a non-primary branch"
+    echo "ok - aitag force allows non-primary branches"
+}
+
+test_tag_allows_master_branch() {
+    setup_home tag-master
+    setup_stubs tag-master
+    local repo="$TEST_ROOT/tag-master-repo"
+    init_repo "$repo"
+    git -C "$repo" branch -M master
+
+    printf 'y\n' | (
+        cd "$repo"
+        EDITOR=true GITAI_AGENT=pi "$PROJECT_ROOT/aitag" v1.0.0
+    )
+
+    assert_call_count 1
+    git -C "$repo" rev-parse -q --verify refs/tags/v1.0.0 >/dev/null || \
+        fail "Expected aitag to create a tag on master"
+    echo "ok - aitag allows the master branch"
+}
+
 test_pr_uses_pi_once_for_title_and_body() {
     setup_home pr
     setup_stubs pr
@@ -691,6 +748,9 @@ Release v1.0.0
 test_commit_message_uses_pi
 test_tag_uses_pi
 test_tag_rejects_empty_pi_response
+test_tag_rejects_non_primary_branch_without_force
+test_tag_force_allows_non_primary_branch
+test_tag_allows_master_branch
 test_pr_uses_pi_once_for_title_and_body
 test_configured_agents_use_their_cli_contract
 test_agent_stdout_failure_is_reported

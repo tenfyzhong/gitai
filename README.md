@@ -100,6 +100,7 @@ aitag [OPTIONS] TAG_NAME [COMMIT]
 * `-a, --annotate`: Create an annotated tag.
 * `-s, --sign`: Create a signed tag.
 * `-u, --local-user USER`: Create tag with specific user.
+* `-f, --force`: Allow tag creation outside the `main` or `master` branch.
 * `--prompt FILE`: Use custom prompt file (default: `$HOME/.config/gitai/prompts/aitag-prompt.txt`)..
 * `--model <model>`: Model to use with the selected agent.
 * `--lang <lang>`: Generate content in specified language (default: `English`).
