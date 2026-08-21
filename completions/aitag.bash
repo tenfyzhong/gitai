@@ -5,7 +5,7 @@ _aitag() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
-    opts="-h --help -a --annotate -s --sign -u --local-user --prompt --model --lang"
+    opts="-h --help -a --annotate -s --sign -u --local-user -f --force --prompt --model --lang"
 
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "$opts" -- "$cur"))
