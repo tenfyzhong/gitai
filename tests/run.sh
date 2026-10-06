@@ -122,6 +122,46 @@ test_commit_message_uses_pi() {
     echo "ok - ai-commit-msg uses pi"
 }
 
+test_pi_isolates_generation_and_allows_explicit_provider() {
+    setup_home pi-isolation
+    setup_stubs pi-isolation
+    cat >"$STUB_DIR/pi" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >"$AGENT_CALLS/args.1"
+cat >"$AGENT_CALLS/stdin.1"
+for flag in --no-tools --no-context-files --no-extensions --no-skills --no-prompt-templates; do
+    if ! grep -Fx -- "$flag" "$AGENT_CALLS/args.1" >/dev/null; then
+        echo "Provider stopped with: MALFORMED_FUNCTION_CALL" >&2
+        exit 1
+    fi
+done
+printf '%s\n' 'fix: isolate commit generation'
+EOF
+    chmod +x "$STUB_DIR/pi"
+    local response
+    response=$(printf '%s\n' 'sample diff' | GITAI_AGENT=pi \
+        "$PROJECT_ROOT/gitai-agent" 'Return only a commit message' 'provider/model') || \
+        fail "Expected Pi generation to disable ambient instructions"
+    [ "$response" = 'fix: isolate commit generation' ] || fail "Unexpected Pi response"
+    assert_contains "$AGENT_CALLS/stdin.1" 'sample diff'
+    [ "$(tail -n2 "$AGENT_CALLS/args.1")" = $'--\nReturn only a commit message' ] || \
+        fail "Expected an explicit task after the option terminator"
+    if grep -Fx -- --extension "$AGENT_CALLS/args.1" >/dev/null; then
+        fail "Expected no provider extension unless explicitly configured"
+    fi
+
+    local provider="$TEST_ROOT/provider extension.ts"
+    : >"$provider"
+    printf '%s\n' 'second diff' | GITAI_AGENT=pi GITAI_PI_EXTENSION="$provider" \
+        "$PROJECT_ROOT/gitai-agent" 'Return only a commit message' 'provider/model' >/dev/null
+    assert_contains "$AGENT_CALLS/args.1" '--extension'
+    assert_contains "$AGENT_CALLS/args.1" "$provider"
+    assert_contains "$AGENT_CALLS/args.1" 'provider/model'
+    assert_contains "$AGENT_CALLS/stdin.1" 'second diff'
+    echo "ok - Pi isolates generation while allowing an explicit provider extension"
+}
+
 test_tag_uses_pi() {
     setup_home tag
     setup_stubs tag
@@ -745,6 +785,7 @@ Release v1.0.0
     echo "ok - aitag strips a Markdown code fence"
 }
 
+test_pi_isolates_generation_and_allows_explicit_provider
 test_commit_message_uses_pi
 test_tag_uses_pi
 test_tag_rejects_empty_pi_response

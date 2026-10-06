@@ -8,6 +8,16 @@ Install and configure at least one supported agent: [pi](https://github.com/badl
 
 Set `GITAI_AGENT` to choose an agent explicitly. Accepted values are `pi`, `oh-my-pi` (or `omp`), `codex`, and `claude-code` (or `claude`). When it is unset, `gitai` uses the first available agent in this order: pi, Oh My Pi, Codex, Claude Code. It exits with an error if none is available.
 
+Pi runs with extension, skill, prompt-template, and context-file discovery disabled. Disabling tools alone does not stop extensions from injecting instructions into a generation request, which can produce unrelated output or provider errors such as `MALFORMED_FUNCTION_CALL`.
+
+If your Pi model requires a custom provider extension, set `GITAI_PI_EXTENSION` to its local entrypoint file or directory. Only explicitly opt in to an extension needed for generation; extensions can still modify prompts even when tools are disabled. For example, with `pi-antigravity` installed in Pi's global npm directory:
+
+```bash
+export GITAI_PI_EXTENSION="$HOME/.pi/agent/npm/node_modules/pi-antigravity/src/index.ts"
+```
+
+In fish, use `set -gx GITAI_PI_EXTENSION "$HOME/.pi/agent/npm/node_modules/pi-antigravity/src/index.ts"`. The selected model and existing Pi credentials are preserved. Built-in providers need no extension setting.
+
 ## Installation
 
 ```bash
@@ -114,6 +124,7 @@ You can specify a custom prompt file using the `--prompt` flag for `aitag`, and 
 
 ## Environment Variables
 
+* `GITAI_PI_EXTENSION`: Optional local Pi provider extension entrypoint or directory to load explicitly while extension discovery is disabled.
 * `GITAI_AGENT`: Select `pi`, `oh-my-pi`, `codex`, or `claude-code`. Common executable-name aliases `omp` and `claude` are also accepted. When unset, agents are auto-detected in that order.
 * `GITAI_MODEL`: Set the model to use. When unset, the selected agent's configured default is used.
 * `GITAI_LANG`: Set the default language for generation.

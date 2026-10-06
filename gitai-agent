@@ -73,9 +73,13 @@ run_agent() {
 
     case "$agent" in
         pi)
-            args=(--print --no-session --no-tools --no-context-files --system-prompt "$prompt")
+            # --no-tools does not prevent extensions from injecting instructions.
+            # Keep generation isolated; opt in only to a required provider extension.
+            args=(--print --no-session --no-tools --no-context-files --no-extensions --no-skills --no-prompt-templates --system-prompt "$prompt")
+            [ -n "${GITAI_PI_EXTENSION:-}" ] && args+=(--extension "$GITAI_PI_EXTENSION")
             [ -n "$model" ] && args+=(--model "$model")
-            pi "${args[@]}"
+            # Stdin carries the diff; supply the task explicitly as well.
+            pi "${args[@]}" -- "$prompt"
             ;;
         oh-my-pi)
             args=(--print --no-session --no-tools --no-rules --no-skills --no-extensions --system-prompt "$prompt")
